@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://cro6l115e8h1w"]
+
+[ext_resource type="Script" uid="uid://bb1uklqshb8vc" path="res://scenes/screens/LevelSelect.gd" id="1_levels"]
+
+[node name="LevelSelect" type="Control" unique_id=441768953]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("1_levels")

@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://t6huppu1jb0p"]
+
+[ext_resource type="Script" uid="uid://cr6nh8dpjoqs8" path="res://scenes/ui/OperationLegend.gd" id="1_legend"]
+
+[node name="OperationLegend" type="Control" unique_id=1434617507]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("1_legend")

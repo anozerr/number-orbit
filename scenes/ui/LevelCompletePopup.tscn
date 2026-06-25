@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://c1np4l61fu6r7"]
+
+[ext_resource type="Script" uid="uid://c67ymnac147os" path="res://scenes/ui/LevelCompletePopup.gd" id="1_popup"]
+
+[node name="LevelCompletePopup" type="Control" unique_id=984400207]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("1_popup")
