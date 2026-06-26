@@ -19,9 +19,12 @@ const ICON_MUSIC: Texture2D = preload("res://assets/images/icons/music-notes.svg
 const ICON_PLAY: Texture2D = preload("res://assets/images/icons/play.svg")
 const ICON_PLAY_WHITE: Texture2D = preload("res://assets/images/icons/play-white.svg")
 const ICON_PLUS: Texture2D = preload("res://assets/images/icons/plus.svg")
+const ICON_RESTART: Texture2D = preload("res://assets/images/icons/arrow-counter-clockwise.svg")
 const ICON_SPEAKER: Texture2D = preload("res://assets/images/icons/speaker-high.svg")
 const ICON_STAR: Texture2D = preload("res://assets/images/icons/star-fill.svg")
 const ICON_STAR_EMPTY: Texture2D = preload("res://assets/images/icons/star-empty-white.svg")
+const ICON_LEVEL_STAR: Texture2D = preload("res://assets/images/icons/star-level-fill.svg")
+const ICON_LEVEL_STAR_EMPTY: Texture2D = preload("res://assets/images/icons/star-level-empty.svg")
 const ICON_X: Texture2D = preload("res://assets/images/icons/x.svg")
 
 const BG: Color = Color("#FFFCF7")
@@ -46,9 +49,9 @@ static func card(bg: Color = Color.WHITE, border: Color = BORDER, radius: int = 
 	style.corner_radius_top_right = radius
 	style.corner_radius_bottom_left = radius
 	style.corner_radius_bottom_right = radius
-	style.shadow_color = Color(0.10, 0.10, 0.18, 0.08)
-	style.shadow_size = 18
-	style.shadow_offset = Vector2(0, 10)
+	style.shadow_color = Color(0.10, 0.10, 0.18, 0.055)
+	style.shadow_size = 14
+	style.shadow_offset = Vector2(0, 8)
 	return style
 
 static func soft_panel(bg: Color = Color.WHITE, radius: int = 34) -> StyleBoxFlat:
@@ -57,9 +60,9 @@ static func soft_panel(bg: Color = Color.WHITE, radius: int = 34) -> StyleBoxFla
 	style.border_width_right = 1
 	style.border_width_top = 1
 	style.border_width_bottom = 1
-	style.shadow_color = Color(0.12, 0.12, 0.22, 0.11)
-	style.shadow_size = 28
-	style.shadow_offset = Vector2(0, 14)
+	style.shadow_color = Color(0.12, 0.12, 0.22, 0.075)
+	style.shadow_size = 20
+	style.shadow_offset = Vector2(0, 10)
 	return style
 
 static func apply_font(control: Control, font: Font = FONT_SEMIBOLD, size: int = 28, color: Color = TEXT) -> void:
@@ -70,9 +73,7 @@ static func apply_font(control: Control, font: Font = FONT_SEMIBOLD, size: int =
 static func menu_button(button: Button) -> void:
 	var normal: StyleBoxFlat = soft_panel(Color.WHITE, 30)
 	var hover: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
-	hover.bg_color = Color("#F8F5FF")
 	var pressed: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
-	pressed.bg_color = Color("#F0E9FF")
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", hover)
 	button.add_theme_stylebox_override("pressed", pressed)
@@ -83,15 +84,9 @@ static func menu_button(button: Button) -> void:
 	add_press_animation(button)
 
 static func primary_button(button: Button) -> void:
-	var normal: StyleBoxFlat = card(PURPLE, PURPLE_DARK, 28)
-	normal.border_width_bottom = 5
-	normal.shadow_color = Color(0.42, 0.22, 0.88, 0.28)
-	normal.shadow_size = 26
-	normal.shadow_offset = Vector2(0, 14)
-	var hover: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
-	hover.bg_color = PURPLE.lightened(0.05)
-	var pressed: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
-	pressed.bg_color = PURPLE_DARK
+	var normal: StyleBoxTexture = gradient_style(PURPLE.lightened(0.13), PURPLE_DARK, 30, Vector2i(740, 120))
+	var hover: StyleBoxTexture = normal.duplicate() as StyleBoxTexture
+	var pressed: StyleBoxTexture = normal.duplicate() as StyleBoxTexture
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", hover)
 	button.add_theme_stylebox_override("pressed", pressed)
@@ -99,7 +94,40 @@ static func primary_button(button: Button) -> void:
 	button.add_theme_color_override("font_hover_color", Color.WHITE)
 	button.add_theme_color_override("font_pressed_color", Color.WHITE)
 	button.add_theme_color_override("font_focus_color", Color.WHITE)
+	add_embedded_shadow(button, Color(0.38, 0.19, 0.85, 0.24))
 	add_press_animation(button)
+
+static func gradient_style(top: Color, bottom: Color, radius: int, texture_size: Vector2i) -> StyleBoxTexture:
+	var texture: ImageTexture = rounded_gradient_texture(top, bottom, radius, texture_size)
+	var style := StyleBoxTexture.new()
+	style.texture = texture
+	style.texture_margin_left = radius
+	style.texture_margin_right = radius
+	style.texture_margin_top = radius
+	style.texture_margin_bottom = radius
+	style.content_margin_left = 0
+	style.content_margin_right = 0
+	style.content_margin_top = 0
+	style.content_margin_bottom = 0
+	return style
+
+static func rounded_gradient_texture(top: Color, bottom: Color, radius: int, texture_size: Vector2i) -> ImageTexture:
+	var image: Image = Image.create(texture_size.x, texture_size.y, false, Image.FORMAT_RGBA8)
+	image.fill(Color(0, 0, 0, 0))
+	var w: int = texture_size.x
+	var h: int = texture_size.y
+	for y in range(h):
+		var t: float = float(y) / float(max(1, h - 1))
+		var color: Color = top.lerp(bottom, t)
+		for x in range(w):
+			if is_inside_rounded_rect(x, y, w, h, radius):
+				image.set_pixel(x, y, color)
+	return ImageTexture.create_from_image(image)
+
+static func is_inside_rounded_rect(x: int, y: int, w: int, h: int, radius: int) -> bool:
+	var cx: int = clamp(x, radius, w - radius - 1)
+	var cy: int = clamp(y, radius, h - radius - 1)
+	return Vector2(x - cx, y - cy).length() <= float(radius)
 
 static func pill(label: Label) -> void:
 	label.add_theme_stylebox_override("normal", soft_panel(Color.WHITE, 24))
@@ -111,6 +139,7 @@ static func icon(texture: Texture2D, parent: Node, position: Vector2, size: Vect
 	rect.size = size
 	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	rect.modulate = color
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(rect)
@@ -118,6 +147,18 @@ static func icon(texture: Texture2D, parent: Node, position: Vector2, size: Vect
 
 static func add_press_animation(button: Button) -> void:
 	button.pivot_offset = button.size * 0.5
+	button.mouse_entered.connect(func() -> void:
+		if not is_instance_valid(button) or button.disabled:
+			return
+		var tween: Tween = button.create_tween()
+		tween.tween_property(button, "scale", Vector2(1.018, 1.018), 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	)
+	button.mouse_exited.connect(func() -> void:
+		if not is_instance_valid(button):
+			return
+		var tween: Tween = button.create_tween()
+		tween.tween_property(button, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	)
 	button.pressed.connect(func() -> void:
 		if not is_instance_valid(button):
 			return
@@ -125,6 +166,29 @@ static func add_press_animation(button: Button) -> void:
 		tween.tween_property(button, "scale", Vector2(0.965, 0.965), 0.055).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 		tween.tween_property(button, "scale", Vector2.ONE, 0.11).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	)
+
+static func add_embedded_shadow(button: Button, color: Color) -> void:
+	var shadow := Panel.new()
+	shadow.name = "SoftShadow"
+	shadow.position = Vector2(0, 10)
+	shadow.size = button.size
+	shadow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	shadow.z_index = -1
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0, 0, 0, 0)
+	style.border_width_left = 0
+	style.border_width_right = 0
+	style.border_width_top = 0
+	style.border_width_bottom = 0
+	style.corner_radius_top_left = 30
+	style.corner_radius_top_right = 30
+	style.corner_radius_bottom_left = 30
+	style.corner_radius_bottom_right = 30
+	style.shadow_color = color
+	style.shadow_size = 22
+	style.shadow_offset = Vector2(0, 8)
+	shadow.add_theme_stylebox_override("panel", style)
+	button.add_child(shadow)
 
 static func operation_icon(op: String) -> Texture2D:
 	match op:

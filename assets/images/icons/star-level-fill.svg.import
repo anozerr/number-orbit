@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dt8j64hth4lvf"
-path="res://.godot/imported/home-orbit.png-4c051743f0ed37082f7a093aa70a076e.ctex"
+uid="uid://cpnkrg6lnc7xv"
+path="res://.godot/imported/star-level-fill.svg-a006fc4eb1694692ba2789346aa65f01.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/images/backgrounds/home-orbit.png"
-dest_files=["res://.godot/imported/home-orbit.png-4c051743f0ed37082f7a093aa70a076e.ctex"]
+source_file="res://assets/images/icons/star-level-fill.svg"
+dest_files=["res://.godot/imported/star-level-fill.svg-a006fc4eb1694692ba2789346aa65f01.ctex"]
 
 [params]
 
@@ -38,3 +38,6 @@ process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
 detect_3d/compress_to=1
+svg/scale=1.0
+editor/scale_with_editor_scale=false
+editor/convert_colors_with_editor_theme=false
