@@ -30,10 +30,20 @@ func operation_name(op: String) -> String:
 
 func card_position(index: int, count: int) -> Vector2:
 	if count == 1:
-		return Vector2(252, 43)
+		return Vector2(0, 43)
 	if count == 2:
 		return Vector2(index * 505, 43)
+	if count == 3:
+		return Vector2(index * 335, 43)
 	return Vector2((index % 2) * 505, int(float(index) / 2.0) * 86)
+
+func card_size(count: int) -> Vector2:
+	match count:
+		1:
+			return Vector2(970, 76)
+		3:
+			return Vector2(300, 76)
+	return Vector2(465, 76)
 
 func add_card(data: Dictionary, count: int) -> void:
 	var op: String = str(data["op"])
@@ -42,7 +52,7 @@ func add_card(data: Dictionary, count: int) -> void:
 	var panel := Panel.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.position = pos
-	panel.size = Vector2(465, 76)
+	panel.size = card_size(count)
 	panel.add_theme_stylebox_override("panel", UIStyles.card(UIStyles.operation_bg(op), UIStyles.operation_border(op), 18))
 	add_child(panel)
 
@@ -51,17 +61,17 @@ func add_card(data: Dictionary, count: int) -> void:
 	content.position = Vector2(0, 0)
 	content.size = panel.size
 	content.alignment = BoxContainer.ALIGNMENT_CENTER
-	content.add_theme_constant_override("separation", 18)
+	content.add_theme_constant_override("separation", 14)
 	panel.add_child(content)
 
 	var name: String = str(data["name"])
-	var label_width: float = 120.0 if name.length() <= 6 else 180.0
 
 	var icon := TextureRect.new()
 	icon.texture = UIStyles.operation_icon(op)
-	icon.custom_minimum_size = Vector2(38, 38)
+	icon.custom_minimum_size = Vector2(34, 34)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	icon.modulate = UIStyles.operation_text(op)
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(icon)
@@ -69,8 +79,8 @@ func add_card(data: Dictionary, count: int) -> void:
 	var name_lbl := Label.new()
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_lbl.text = name
-	name_lbl.custom_minimum_size = Vector2(label_width, panel.size.y)
-	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	name_lbl.custom_minimum_size = Vector2(130 if count != 3 else 118, panel.size.y)
+	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(name_lbl, UIStyles.FONT_BOLD, 26, UIStyles.operation_text(op))
+	UIStyles.apply_font(name_lbl, UIStyles.FONT_BOLD, 27, UIStyles.operation_text(op))
 	content.add_child(name_lbl)

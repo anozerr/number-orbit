@@ -13,6 +13,8 @@ var tutorial_mode: bool = false
 var tutorial_select_mode: bool = false
 var tutorial_select_page: String = ""
 var selected_tutorial_op: int = 0
+var level_select_page: String = ""
+var selected_level_difficulty: int = 0
 var tutorial_index: int = 0
 var return_to_game_after_settings: bool = false
 var orbit_input_locked: bool = false
@@ -46,7 +48,6 @@ func build() -> void:
 	main_menu = get_or_create_screen("MainMenu", MainMenuScene) as MainMenuScreen
 	main_menu.play_pressed.connect(_on_play_pressed)
 	main_menu.levels_pressed.connect(show_level_select)
-	main_menu.tutorial_pressed.connect(_on_tutorial_pressed)
 	main_menu.settings_pressed.connect(_on_main_settings_pressed)
 
 	level_select = get_or_create_screen("LevelSelect", LevelSelectScene) as LevelSelectScreen
@@ -92,17 +93,20 @@ func show_level_select() -> void:
 	tutorial_mode = false
 	tutorial_select_mode = false
 	tutorial_select_page = ""
+	level_select_page = "all"
 	hide_all()
 	level_select.visible = true
-	level_select.rebuild(state.star_ratings, state.max_unlocked_level)
+	level_select.rebuild_level_difficulties(state.star_ratings, state.max_unlocked_level, state.tutorial_completed)
 
-func show_tutorial_select() -> void:
+func show_level_grid(difficulty_index: int = selected_level_difficulty) -> void:
 	tutorial_mode = false
-	tutorial_select_mode = true
-	tutorial_select_page = "ops"
+	tutorial_select_mode = false
+	tutorial_select_page = ""
+	level_select_page = "grid"
+	selected_level_difficulty = int(clamp(difficulty_index, 0, LevelData.DIFFICULTIES.size() - 1))
 	hide_all()
 	level_select.visible = true
-	level_select.rebuild_tutorial_ops(state.tutorial_completed)
+	level_select.rebuild_levels_for_difficulty(selected_level_difficulty, state.star_ratings, state.max_unlocked_level)
 
 func show_tutorial_difficulty_select(op_index: int = selected_tutorial_op) -> void:
 	tutorial_mode = false
@@ -139,10 +143,10 @@ func _on_settings_back_pressed() -> void:
 
 func _on_play_pressed() -> void:
 	if not state.has_played:
-		load_level(1)
+		state.has_played = true
+		load_tutorial_level(0)
 	else:
 		load_level(state.current_level)
-	state.has_played = true
 	show_game()
 
 func _on_level_selected(level_number: int) -> void:
@@ -153,28 +157,29 @@ func _on_level_selected(level_number: int) -> void:
 			load_tutorial_level(selected_tutorial_op * 3 + level_number - 1)
 			show_game()
 		return
+	if level_number < 0:
+		show_tutorial_difficulty_select(-level_number - 1)
+		return
 	load_level(level_number)
 	state.has_played = true
 	show_game()
 
 func _on_level_select_back_pressed() -> void:
 	if tutorial_select_mode and tutorial_select_page == "difficulty":
-		show_tutorial_select()
+		show_level_select()
 	else:
 		show_main_menu()
 
-func _on_tutorial_pressed() -> void:
-	show_tutorial_select()
-
 func _on_game_back_pressed() -> void:
 	if tutorial_mode:
-		show_tutorial_difficulty_select(selected_tutorial_op)
+		show_level_select()
 	else:
 		show_level_select()
 
 func load_level(level_number: int) -> void:
 	tutorial_mode = false
 	var data: Dictionary = state.load_level(level_number)
+	selected_level_difficulty = LevelData.difficulty_index_for_level(state.current_level)
 	orbit_items = assign_orbit_slots(OrbitGenerator.initial_items(data, state.current_number))
 	if game_screen != null:
 		game_screen.clear_hint_cache()
@@ -312,14 +317,6 @@ func reflow_orbit_slots(removed_slot: int = -1, old_slot_count: int = 0, removed
 func orbit_angle_for_slot(slot: int, slot_count: int) -> float:
 	return TAU * float(slot) / float(max(1, slot_count)) - PI / 2.0
 
-func clear_orbit_transition_metadata() -> void:
-	for i in range(orbit_items.size()):
-		var item: Dictionary = (orbit_items[i] as Dictionary).duplicate()
-		item.erase("orbit_target_angle")
-		item.erase("orbit_snap_to_target")
-		item.erase("orbit_force_clockwise")
-		orbit_items[i] = item
-
 func restart_level() -> void:
 	if tutorial_mode:
 		load_tutorial_level(tutorial_index)
@@ -330,7 +327,7 @@ func restart_level() -> void:
 func refresh_game_screen() -> void:
 	var data: Dictionary = active_level_data()
 	var thresholds: Array = StarCalculator.sorted_thresholds(data)
-	game_screen.configure(active_level_title(), state.current_number, state.target_number, state.moves_used, thresholds, visible_orbit_items(), data["allowed_ops"] as Array, state.is_level_failed, state.hint_points, tutorial_mode)
+	game_screen.configure(active_level_title(), state.current_number, state.target_number, state.moves_used, thresholds, visible_orbit_items(), data["allowed_ops"] as Array, state.is_level_failed, state.hint_points, tutorial_mode, tutorial_help_text(data))
 
 func visible_orbit_items() -> Array:
 	var result: Array = []
@@ -516,7 +513,10 @@ func active_level_title() -> String:
 		var op: String = str(data.get("tutorial_op", (data["allowed_ops"] as Array)[0]))
 		var difficulty: String = str(data.get("difficulty", ""))
 		return "TUTORIAL: %s %s" % [op.to_upper(), difficulty.to_upper()]
-	return "LEVEL %d" % state.current_level
+	var data: Dictionary = active_level_data()
+	var difficulty: String = str(data.get("difficulty", "Level")).to_upper()
+	var local_level: int = int(data.get("local_index", LevelData.local_level_number(state.current_level)))
+	return "%s LEVEL %d" % [difficulty, local_level]
 
 func _on_popup_next_pressed() -> void:
 	complete_popup.hide_popup()
@@ -536,6 +536,21 @@ func _on_popup_next_pressed() -> void:
 func _on_popup_levels_pressed() -> void:
 	complete_popup.hide_popup()
 	if tutorial_mode:
-		show_tutorial_difficulty_select(selected_tutorial_op)
+		show_level_select()
 	else:
 		show_level_select()
+
+func tutorial_help_text(data: Dictionary) -> String:
+	if not tutorial_mode:
+		return ""
+	var op: String = str(data.get("tutorial_op", "add"))
+	match op:
+		"add":
+			return "Add increases the center number. Pick numbers that build the target."
+		"subtract":
+			return "Subtract decreases the center number. A grey button would go below 1."
+		"multiply":
+			return "Multiply makes the number bigger fast. Use the right factors in order."
+		"divide":
+			return "Divide makes the number smaller. Only exact divisions are available."
+	return "Choose orbit numbers to transform the center number into the target."

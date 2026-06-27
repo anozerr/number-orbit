@@ -37,6 +37,9 @@ const PURPLE_SOFT: Color = Color("#BFA7FF")
 const GOLD: Color = Color("#FFC857")
 const DISABLED: Color = Color("#A8ADB8")
 
+static var _rounded_gradient_cache: Dictionary = {}
+static var _circle_gradient_cache: Dictionary = {}
+
 static func card(bg: Color = Color.WHITE, border: Color = BORDER, radius: int = 26) -> StyleBoxFlat:
 	var style: StyleBoxFlat = StyleBoxFlat.new()
 	style.bg_color = bg
@@ -112,6 +115,9 @@ static func gradient_style(top: Color, bottom: Color, radius: int, texture_size:
 	return style
 
 static func rounded_gradient_texture(top: Color, bottom: Color, radius: int, texture_size: Vector2i) -> ImageTexture:
+	var key := "%s:%s:%d:%d:%d" % [top.to_html(true), bottom.to_html(true), radius, texture_size.x, texture_size.y]
+	if _rounded_gradient_cache.has(key):
+		return _rounded_gradient_cache[key] as ImageTexture
 	var image: Image = Image.create(texture_size.x, texture_size.y, false, Image.FORMAT_RGBA8)
 	image.fill(Color(0, 0, 0, 0))
 	var w: int = texture_size.x
@@ -122,7 +128,27 @@ static func rounded_gradient_texture(top: Color, bottom: Color, radius: int, tex
 		for x in range(w):
 			if is_inside_rounded_rect(x, y, w, h, radius):
 				image.set_pixel(x, y, color)
-	return ImageTexture.create_from_image(image)
+	var texture: ImageTexture = ImageTexture.create_from_image(image)
+	_rounded_gradient_cache[key] = texture
+	return texture
+
+static func circle_gradient_texture(diameter: int, top: Color, bottom: Color) -> ImageTexture:
+	var key := "%d:%s:%s" % [diameter, top.to_html(true), bottom.to_html(true)]
+	if _circle_gradient_cache.has(key):
+		return _circle_gradient_cache[key] as ImageTexture
+	var image: Image = Image.create(diameter, diameter, false, Image.FORMAT_RGBA8)
+	image.fill(Color(0, 0, 0, 0))
+	var radius: float = float(diameter) * 0.5
+	var center := Vector2(radius, radius)
+	for y in range(diameter):
+		for x in range(diameter):
+			var offset := Vector2(float(x), float(y)) - center
+			if offset.length() <= radius:
+				var t: float = float(y) / float(max(1, diameter - 1))
+				image.set_pixel(x, y, top.lerp(bottom, t))
+	var texture: ImageTexture = ImageTexture.create_from_image(image)
+	_circle_gradient_cache[key] = texture
+	return texture
 
 static func is_inside_rounded_rect(x: int, y: int, w: int, h: int, radius: int) -> bool:
 	var cx: int = clamp(x, radius, w - radius - 1)
@@ -139,7 +165,7 @@ static func icon(texture: Texture2D, parent: Node, position: Vector2, size: Vect
 	rect.size = size
 	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	rect.modulate = color
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(rect)

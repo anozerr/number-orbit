@@ -3,7 +3,6 @@ extends Control
 
 signal play_pressed
 signal levels_pressed
-signal tutorial_pressed
 signal settings_pressed
 
 var play_button: Button
@@ -68,19 +67,9 @@ func build() -> void:
 	add_child(levels_btn)
 	UIStyles.icon(UIStyles.ICON_LEVELS, levels_btn, Vector2(240, 36), Vector2(38, 38), UIStyles.TEXT)
 
-	var tutorial_btn := Button.new()
-	tutorial_btn.text = "        Tutorials"
-	tutorial_btn.position = Vector2(170, 1340)
-	tutorial_btn.size = Vector2(740, 110)
-	tutorial_btn.add_theme_font_size_override("font_size", 38)
-	UIStyles.menu_button(tutorial_btn)
-	tutorial_btn.pressed.connect(func(): tutorial_pressed.emit())
-	add_child(tutorial_btn)
-	UIStyles.icon(UIStyles.ICON_BULB, tutorial_btn, Vector2(240, 36), Vector2(38, 38), UIStyles.TEXT)
-
 	var settings_btn := Button.new()
 	settings_btn.text = "        Settings"
-	settings_btn.position = Vector2(170, 1480)
+	settings_btn.position = Vector2(170, 1340)
 	settings_btn.size = Vector2(740, 110)
 	settings_btn.add_theme_font_size_override("font_size", 38)
 	UIStyles.menu_button(settings_btn)

@@ -6,7 +6,7 @@ var current_level: int = 1
 var current_number: int = 1
 var target_number: int = 10
 var moves_used: int = 0
-var max_unlocked_level: int = 1
+var max_unlocked_level: int = 3
 var star_ratings: Array = []
 var bulb_rewards_claimed: Array = []
 var tutorial_completed: Array = []
@@ -20,6 +20,7 @@ const HINT_COST := 80
 
 func setup(level_data: Array) -> void:
 	levels = level_data
+	max_unlocked_level = min(3, levels.size())
 	star_ratings.resize(levels.size())
 	bulb_rewards_claimed.resize(levels.size())
 	for i in range(levels.size()):
@@ -44,8 +45,19 @@ func current_level_data() -> Dictionary:
 	return levels[current_level - 1]
 
 func unlock_next_level() -> void:
-	if current_level < levels.size():
-		max_unlocked_level = max(max_unlocked_level, current_level + 1)
+	while max_unlocked_level < levels.size():
+		var group_start: int = max_unlocked_level - int(posmod(max_unlocked_level - 1, 3))
+		var group_end: int = min(group_start + 2, levels.size())
+		if not is_level_group_completed(group_start, group_end):
+			return
+		max_unlocked_level = min(levels.size(), group_end + 3)
+
+func is_level_group_completed(first_level: int, last_level: int) -> bool:
+	for level_number in range(first_level, last_level + 1):
+		var index: int = level_number - 1
+		if index < 0 or index >= star_ratings.size() or int(star_ratings[index]) <= 0:
+			return false
+	return true
 
 func is_level_unlocked(level_number: int) -> bool:
 	return level_number <= max_unlocked_level
@@ -67,6 +79,12 @@ func is_tutorial_op_completed(op_index: int) -> bool:
 		return false
 	for i in range(3):
 		if not bool(tutorial_completed[start_index + i]):
+			return false
+	return true
+
+func are_all_tutorials_completed() -> bool:
+	for completed in tutorial_completed:
+		if not bool(completed):
 			return false
 	return true
 

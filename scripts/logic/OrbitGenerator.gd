@@ -17,9 +17,6 @@ static func items_for_move(data: Dictionary, current_number: int, move_index: in
 		return sanitize_items(data, current_number, (data["sequence"] as Array).duplicate())
 	return deterministic_items(data, current_number)
 
-static func generate_items(data: Dictionary, current_number: int) -> Array:
-	return deterministic_items(data, current_number)
-
 static func sanitize_items(data: Dictionary, current_number: int, planned_items: Array) -> Array:
 	var result: Array = []
 	var used: Dictionary = {}
