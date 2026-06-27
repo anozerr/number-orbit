@@ -4,6 +4,8 @@ extends Control
 signal play_pressed
 signal levels_pressed
 signal settings_pressed
+signal reset_progress_pressed
+signal add_bulbs_pressed
 
 var play_button: Button
 var logo_orbit_rect: TextureRect
@@ -77,10 +79,33 @@ func build() -> void:
 	add_child(settings_btn)
 	UIStyles.icon(UIStyles.ICON_GEAR, settings_btn, Vector2(240, 36), Vector2(38, 38), UIStyles.TEXT)
 
+	var reset_btn := Button.new()
+	reset_btn.text = "Reset progress"
+	reset_btn.position = Vector2(105, 1785)
+	reset_btn.size = Vector2(390, 54)
+	reset_btn.add_theme_font_size_override("font_size", 22)
+	reset_btn.pressed.connect(func(): reset_progress_pressed.emit())
+	add_child(reset_btn)
+
+	var bulbs_btn := Button.new()
+	bulbs_btn.text = "Add 500 bulbs"
+	bulbs_btn.position = Vector2(585, 1785)
+	bulbs_btn.size = Vector2(390, 54)
+	bulbs_btn.add_theme_font_size_override("font_size", 22)
+	bulbs_btn.pressed.connect(func(): add_bulbs_pressed.emit())
+	add_child(bulbs_btn)
+
 func set_continue_mode(has_played: bool, current_level: int) -> void:
 	if play_button == null:
 		return
 	play_button.text = "        Continue" if has_played and current_level > 1 else "        Play"
+
+func pulse_play_button() -> void:
+	if play_button == null:
+		return
+	var tween := play_button.create_tween()
+	tween.tween_property(play_button, "scale", Vector2(1.035, 1.035), 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(play_button, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 func _process(delta: float) -> void:
 	if logo_orbit_rect == null:

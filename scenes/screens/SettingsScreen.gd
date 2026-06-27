@@ -2,9 +2,18 @@ class_name SettingsScreen
 extends Control
 
 signal back_pressed
+signal volumes_changed(music_value: int, sound_value: int)
+
+var music_volume := 80
+var sound_volume := 80
 
 func _ready() -> void:
 	size = Vector2(1080, 1920)
+	build()
+
+func configure(music_value: int, sound_value: int) -> void:
+	music_volume = int(clamp(music_value, 0, 100))
+	sound_volume = int(clamp(sound_value, 0, 100))
 	build()
 
 func build() -> void:
@@ -30,12 +39,12 @@ func build() -> void:
 	add_child(back_btn)
 	UIStyles.icon(UIStyles.ICON_BACK, back_btn, Vector2(23, 23), Vector2(42, 42), UIStyles.TEXT)
 
-	add_slider_block("MUSIC VOLUME", UIStyles.ICON_MUSIC, 80, 300)
+	add_slider_block("MUSIC VOLUME", UIStyles.ICON_MUSIC, music_volume, 300, "music")
 	add_divider(250, 525)
-	add_slider_block("SOUND VOLUME", UIStyles.ICON_SPEAKER, 80, 575)
+	add_slider_block("SOUND VOLUME", UIStyles.ICON_SPEAKER, sound_volume, 575, "sound")
 	add_divider(250, 800)
 
-func add_slider_block(text: String, icon_texture: Texture2D, value: int, y: int) -> void:
+func add_slider_block(text: String, icon_texture: Texture2D, value: int, y: int, key: String) -> void:
 	var block_x: float = 105.0
 	var track_width: float = 650.0
 	UIStyles.icon(icon_texture, self, Vector2(block_x, y + 4), Vector2(42, 42), UIStyles.MUTED)
@@ -85,7 +94,7 @@ func add_slider_block(text: String, icon_texture: Texture2D, value: int, y: int)
 	value_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	UIStyles.apply_font(value_lbl, UIStyles.FONT_MEDIUM, 26, UIStyles.TEXT)
 	add_child(value_lbl)
-	slider.value_changed.connect(_on_slider_value_changed.bind(value_lbl, track_fill, knob, track_width))
+	slider.value_changed.connect(_on_slider_value_changed.bind(value_lbl, track_fill, knob, track_width, key))
 
 func slider_track_style(color: Color, radius: int) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
@@ -113,11 +122,16 @@ func slider_knob_style() -> StyleBoxFlat:
 	style.shadow_offset = Vector2(0, 4)
 	return style
 
-func _on_slider_value_changed(value: float, value_label: Label, fill: Panel, knob: Panel, track_width: float) -> void:
+func _on_slider_value_changed(value: float, value_label: Label, fill: Panel, knob: Panel, track_width: float, key: String) -> void:
 	value_label.text = "%d%%" % int(round(value))
 	var fill_width: float = track_width * clamp(value, 0.0, 100.0) / 100.0
 	fill.size = Vector2(fill_width, fill.size.y)
 	knob.position = Vector2(fill.position.x + fill_width - knob.size.x * 0.5, knob.position.y)
+	if key == "music":
+		music_volume = int(round(value))
+	else:
+		sound_volume = int(round(value))
+	volumes_changed.emit(music_volume, sound_volume)
 
 func add_divider(x: int, y: int) -> void:
 	var line := ColorRect.new()

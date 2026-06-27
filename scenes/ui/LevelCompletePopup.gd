@@ -69,6 +69,7 @@ func build() -> void:
 	reward_label.size = Vector2(900, 50)
 	reward_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	reward_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	reward_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	UIStyles.apply_font(reward_label, UIStyles.FONT_SEMIBOLD, 24, UIStyles.MUTED)
 	panel.add_child(reward_label)
 
@@ -92,21 +93,50 @@ func build() -> void:
 func show_result(title_text: String, stars: int, moves: int, has_next: bool, reward: int = 0, hint_points: int = 0, show_details: bool = true) -> void:
 	title_label.text = "%s\nCOMPLETE!" % title_text
 	stars_label.visible = show_details
-	moves_label.visible = show_details
-	reward_label.visible = show_details
+	moves_label.visible = true
+	reward_label.visible = true
 	if show_details:
+		title_label.position = Vector2(0, 105)
+		title_label.size = Vector2(900, 110)
+		moves_label.position = Vector2(0, 370)
+		reward_label.position = Vector2(0, 425)
+		reward_label.size = Vector2(900, 72)
+		next_button.position = Vector2(145, 525)
+		next_button.size = Vector2(610, 100)
+		levels_button.position = Vector2(145, 665)
+		levels_button.size = Vector2(610, 82)
 		draw_star_row(stars)
 		moves_label.text = "Moves: %d" % moves
 		if reward > 0:
-			reward_label.text = "+%d bulbs  •  Balance: %d" % [reward, hint_points]
+			reward_label.text = "New reward: +%d bulbs\nBalance: %d" % [reward, hint_points]
 		else:
-			reward_label.text = "Bulb reward already claimed"
+			reward_label.text = "Best reward already claimed\nBalance: %d" % hint_points
 	else:
+		title_label.position = Vector2(0, 95)
+		title_label.size = Vector2(900, 118)
 		draw_star_row(0)
+		moves_label.position = Vector2(0, 275)
+		moves_label.text = "Moves: %d" % moves
+		reward_label.position = Vector2(90, 340)
+		reward_label.size = Vector2(720, 76)
+		reward_label.text = "Tutorials teach the operators.\nNo bulb reward is given here."
+		next_button.position = Vector2(145, 525)
+		next_button.size = Vector2(610, 100)
+		levels_button.position = Vector2(145, 665)
+		levels_button.size = Vector2(610, 82)
 	next_button.text = "Next Level" if show_details else "Next Tutorial"
-	levels_button.text = "Back to Levels" if show_details else "Back to Tutorials"
+	levels_button.text = "Back to Levels" if show_details else "Back to All Levels"
 	next_button.visible = has_next
 	visible = true
+	animate_open()
+
+func animate_open() -> void:
+	panel.scale = Vector2(0.94, 0.94)
+	panel.pivot_offset = panel.size * 0.5
+	panel.modulate.a = 0.0
+	var tween := panel.create_tween()
+	tween.tween_property(panel, "modulate:a", 1.0, 0.12)
+	tween.parallel().tween_property(panel, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 func hide_popup() -> void:
 	visible = false

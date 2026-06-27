@@ -17,6 +17,7 @@ var level_label: Label
 var task_label: Label
 var goal_panel: Panel
 var goal_label: Label
+var goal_divider: ColorRect
 var tutorial_help_label: Label
 var moves_panel: Panel
 var moves_count_label: Label
@@ -40,11 +41,26 @@ var level_failed: bool = false
 var current_number_value: int = 0
 var current_hint_points: int = 0
 var current_moves: int = 0
+var current_target_value: int = 0
+var current_thresholds: Array = []
+var current_is_tutorial := false
 var cached_popup_hint_text: String = ""
 var cached_popup_move_index: int = -1
+var previous_failed_state := false
+var tutorial_help_text_current := ""
+var temporary_help_version := 0
+var bulbs_button_icon: TextureRect
+var bulbs_button_label: Label
 
 func _ready() -> void:
 	build()
+
+func _unhandled_input(event: InputEvent) -> void:
+	var mouse_event := event as InputEventMouseButton
+	if mouse_event == null or not mouse_event.pressed:
+		return
+	if operation_legend != null:
+		operation_legend.close_callout_if_outside(mouse_event.position)
 
 func build() -> void:
 	for child in get_children():
@@ -60,8 +76,8 @@ func build() -> void:
 	add_child(center_label)
 
 	level_label = Label.new()
-	level_label.position = Vector2(0, 72)
-	level_label.size = Vector2(1080, 60)
+	level_label.position = Vector2(0, 80)
+	level_label.size = Vector2(1080, 50)
 	level_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	level_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	UIStyles.apply_font(level_label, UIStyles.FONT_BOLD, 30, UIStyles.TEXT)
@@ -76,22 +92,30 @@ func build() -> void:
 	add_child(task_label)
 
 	goal_panel = Panel.new()
-	goal_panel.position = Vector2(300, 142)
-	goal_panel.size = Vector2(480, 92)
+	goal_panel.position = Vector2(140, 152)
+	goal_panel.size = Vector2(800, 88)
 	goal_panel.add_theme_stylebox_override("panel", UIStyles.card(Color("#FFF4CF"), Color("#F0C057"), 28))
 	add_child(goal_panel)
+	goal_panel.gui_input.connect(_on_goal_panel_input)
 
 	goal_label = Label.new()
 	goal_label.position = Vector2(0, 0)
-	goal_label.size = goal_panel.size
+	goal_label.size = Vector2(400, 88)
 	goal_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	goal_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	UIStyles.apply_font(goal_label, UIStyles.FONT_BOLD, 38, Color("#8D6100"))
 	goal_panel.add_child(goal_label)
 
+	goal_divider = ColorRect.new()
+	goal_divider.position = Vector2(399, 18)
+	goal_divider.size = Vector2(2, 52)
+	goal_divider.color = Color("#EED37B")
+	goal_divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	goal_panel.add_child(goal_divider)
+
 	tutorial_help_label = Label.new()
-	tutorial_help_label.position = Vector2(95, 270)
-	tutorial_help_label.size = Vector2(890, 82)
+	tutorial_help_label.position = Vector2(95, 262)
+	tutorial_help_label.size = Vector2(890, 72)
 	tutorial_help_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tutorial_help_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	tutorial_help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -120,38 +144,41 @@ func build() -> void:
 	UIStyles.icon(UIStyles.ICON_GEAR, settings, Vector2(23, 23), Vector2(42, 42), UIStyles.TEXT)
 
 	moves_panel = Panel.new()
-	moves_panel.position = Vector2(345, 268)
-	moves_panel.size = Vector2(390, 94)
-	moves_panel.add_theme_stylebox_override("panel", UIStyles.soft_panel(Color.WHITE, 24))
-	add_child(moves_panel)
+	moves_panel.position = Vector2(400, 0)
+	moves_panel.size = Vector2(400, 88)
+	moves_panel.add_theme_stylebox_override("panel", empty_panel_style())
+	goal_panel.add_child(moves_panel)
+	moves_panel.gui_input.connect(_on_moves_panel_input)
 
 	moves_count_label = Label.new()
-	moves_count_label.position = Vector2(0, 10)
-	moves_count_label.size = Vector2(390, 36)
+	moves_count_label.position = Vector2(0, 9)
+	moves_count_label.size = Vector2(400, 34)
 	moves_count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	moves_count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	UIStyles.apply_font(moves_count_label, UIStyles.FONT_SEMIBOLD, 24, UIStyles.TEXT)
 	moves_panel.add_child(moves_count_label)
 
 	moves_stars_label = Label.new()
-	moves_stars_label.position = Vector2(0, 45)
-	moves_stars_label.size = Vector2(390, 38)
+	moves_stars_label.position = Vector2(0, 43)
+	moves_stars_label.size = Vector2(400, 36)
 	moves_stars_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	moves_stars_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	UIStyles.apply_font(moves_stars_label, UIStyles.FONT_BOLD, 28, UIStyles.GOLD)
 	moves_panel.add_child(moves_stars_label)
 
 	status_label = Label.new()
-	status_label.position = Vector2(70, 1488)
-	status_label.size = Vector2(940, 58)
+	status_label.position = Vector2(70, 1448)
+	status_label.size = Vector2(940, 52)
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	status_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	UIStyles.apply_font(status_label, UIStyles.FONT_SEMIBOLD, 24, Color("#C82424"))
+	status_label.add_theme_stylebox_override("normal", UIStyles.card(Color("#FFF1F1"), Color("#F5B5B5"), 22))
+	status_label.visible = false
 	add_child(status_label)
 
 	restart_button = Button.new()
 	restart_button.text = "     Restart"
-	restart_button.position = Vector2(555, 1568)
+	restart_button.position = Vector2(555, 1534)
 	restart_button.size = Vector2(455, 68)
 	restart_button.add_theme_font_size_override("font_size", 28)
 	UIStyles.menu_button(restart_button)
@@ -160,17 +187,25 @@ func build() -> void:
 	restart_icon = UIStyles.icon(UIStyles.ICON_RESTART, restart_button, Vector2(126, 19), Vector2(30, 30), UIStyles.TEXT)
 
 	bulbs_button = Button.new()
-	bulbs_button.text = "     Hint"
-	bulbs_button.position = Vector2(70, 1568)
+	bulbs_button.text = ""
+	bulbs_button.position = Vector2(70, 1534)
 	bulbs_button.size = Vector2(455, 68)
-	bulbs_button.add_theme_font_size_override("font_size", 28)
+	bulbs_button.add_theme_font_size_override("font_size", 24)
 	UIStyles.menu_button(bulbs_button)
 	bulbs_button.pressed.connect(show_hint_popup)
 	add_child(bulbs_button)
-	UIStyles.icon(UIStyles.ICON_BULB, bulbs_button, Vector2(138, 17), Vector2(34, 34), UIStyles.GOLD)
+	bulbs_button_icon = UIStyles.icon(UIStyles.ICON_BULB, bulbs_button, Vector2(0, 17), Vector2(34, 34), UIStyles.GOLD)
+	bulbs_button_label = Label.new()
+	bulbs_button_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bulbs_button_label.position = Vector2.ZERO
+	bulbs_button_label.size = bulbs_button.size
+	bulbs_button_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bulbs_button_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(bulbs_button_label, UIStyles.FONT_BOLD, 24, UIStyles.TEXT)
+	bulbs_button.add_child(bulbs_button_label)
 
 	operation_legend = OperationLegendScene.instantiate()
-	operation_legend.position = Vector2(55, 1710)
+	operation_legend.position = Vector2(55, 1638)
 	add_child(operation_legend)
 
 	orbit = Node2D.new()
@@ -183,6 +218,9 @@ func configure(title_text: String, current_number: int, target_number: int, move
 	current_number_value = current_number
 	current_hint_points = hint_points
 	current_moves = moves
+	current_target_value = target_number
+	current_thresholds = thresholds.duplicate()
+	current_is_tutorial = tutorial
 	if cached_popup_move_index != current_moves:
 		cached_popup_hint_text = ""
 		cached_popup_move_index = -1
@@ -190,8 +228,11 @@ func configure(title_text: String, current_number: int, target_number: int, move
 	task_label.text = "%d  →  %d" % [current_number, target_number]
 	task_label.visible = false
 	goal_label.text = "TARGET  %d" % target_number
-	tutorial_help_label.visible = tutorial
-	tutorial_help_label.text = tutorial_help
+	tutorial_help_text_current = fail_comment_text() if failed else (tutorial_help if tutorial else progress_comment_text(moves))
+	tutorial_help_label.visible = true
+	tutorial_help_label.modulate.a = 1.0
+	tutorial_help_label.text = tutorial_help_text_current
+	apply_info_line_style(failed)
 	center_label.text = str(current_number)
 	if last_center_number != current_number:
 		pop_center_number()
@@ -199,22 +240,29 @@ func configure(title_text: String, current_number: int, target_number: int, move
 	moves_count_label.text = "Moves: %d" % moves
 	moves_stars_label.text = current_stars_string(moves, thresholds)
 	moves_panel.visible = not tutorial
-	status_label.text = "No valid path left. Restart the level." if level_failed else ""
+	goal_divider.visible = not tutorial
+	goal_label.size = Vector2(800 if tutorial else 400, 88)
+	status_label.text = "No valid moves left — try Restart or use a Hint." if level_failed else ""
+	status_label.visible = false
 	operation_legend.configure_ops(allowed_ops)
 	operation_legend.visible = true
 	bulbs_button.visible = not tutorial
+	update_hint_button_label(hint_points)
 	if tutorial:
-		restart_button.position = Vector2(70, 1568)
+		restart_button.position = Vector2(70, 1534)
 		restart_button.size = Vector2(940, 68)
 		restart_button.text = "     Restart"
 		if restart_icon != null:
 			restart_icon.position = Vector2(362, 19)
 	else:
-		restart_button.position = Vector2(555, 1568)
+		restart_button.position = Vector2(555, 1534)
 		restart_button.size = Vector2(455, 68)
 		restart_button.text = "     Restart"
 		if restart_icon != null:
 			restart_icon.position = Vector2(126, 19)
+	if level_failed and not previous_failed_state:
+		pulse_failure_controls()
+	previous_failed_state = level_failed
 	set_orbit_items(orbit_items)
 	queue_redraw()
 
@@ -226,12 +274,120 @@ func pop_center_number() -> void:
 	tween.tween_property(center_label, "scale", Vector2(1.08, 1.08), 0.08).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.tween_property(center_label, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
+func pulse_failure_controls() -> void:
+	if restart_button == null:
+		return
+	var tween := restart_button.create_tween()
+	tween.tween_property(restart_button, "scale", Vector2(1.04, 1.04), 0.13).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(restart_button, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
 func current_stars_string(moves: int, thresholds: Array) -> String:
 	if moves <= int(thresholds[0]):
 		return "★★★"
 	if moves <= int(thresholds[1]):
 		return "★★"
 	return "★"
+
+func _on_moves_panel_input(event: InputEvent) -> void:
+	var mouse_event := event as InputEventMouseButton
+	if mouse_event != null and mouse_event.pressed:
+		pop_moves_panel()
+		show_temporary_help(star_requirements_text(), false)
+
+func _on_goal_panel_input(event: InputEvent) -> void:
+	var mouse_event := event as InputEventMouseButton
+	if mouse_event != null and mouse_event.pressed:
+		pop_goal_panel()
+		if current_is_tutorial or (event as InputEventMouseButton).position.x <= 400.0:
+			show_temporary_help("Reach %d exactly by tapping orbit numbers in the right order." % current_target_value, false)
+
+func star_requirements_text() -> String:
+	if current_thresholds.size() < 3:
+		return "Use fewer moves to earn more stars."
+	return "★★★ %d moves    ★★ %d moves    ★ %d moves" % [int(current_thresholds[0]), int(current_thresholds[1]), int(current_thresholds[2])]
+
+func progress_comment_text(moves: int) -> String:
+	if current_thresholds.size() < 3:
+		return "Choose orbit numbers carefully. Tap Target or Moves for details."
+	var three_star_moves := int(current_thresholds[0])
+	var two_star_moves := int(current_thresholds[1])
+	if moves == 0:
+		return "Choose orbit numbers carefully. Tap Target or Moves for details."
+	if moves <= three_star_moves:
+		return "Good move. You are still on track for three stars."
+	if moves <= two_star_moves:
+		return "Still good. Two stars are still within reach."
+	return "Almost there. Finish the target with the moves you have left."
+
+func fail_comment_text() -> String:
+	return "No valid moves left — tap Restart or use a Hint."
+
+func apply_info_line_style(error: bool = false) -> void:
+	if error:
+		tutorial_help_label.add_theme_stylebox_override("normal", UIStyles.card(Color("#FFF1F1"), Color("#F5B5B5"), 24))
+		UIStyles.apply_font(tutorial_help_label, UIStyles.FONT_SEMIBOLD, 24, Color("#C82424"))
+	else:
+		UIStyles.pill(tutorial_help_label)
+		UIStyles.apply_font(tutorial_help_label, UIStyles.FONT_MEDIUM, 24, UIStyles.MUTED)
+
+func update_hint_button_label(hint_points: int) -> void:
+	if bulbs_button_label == null:
+		return
+	bulbs_button_label.text = "Hint  %d/%d" % [hint_points, GameState.HINT_COST]
+	var label_width: float = bulbs_button_label.get_theme_font("font").get_string_size(bulbs_button_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, bulbs_button_label.get_theme_font_size("font_size")).x
+	var group_width := 34.0 + 12.0 + label_width
+	if bulbs_button_icon != null:
+		bulbs_button_icon.position = Vector2((bulbs_button.size.x - group_width) * 0.5, 17)
+	bulbs_button_label.position = Vector2((bulbs_button.size.x - group_width) * 0.5 + 46.0, 0)
+	bulbs_button_label.size = Vector2(label_width + 8.0, bulbs_button.size.y)
+
+func pop_moves_panel() -> void:
+	if moves_panel == null:
+		return
+	moves_panel.pivot_offset = moves_panel.size * 0.5
+	var tween := moves_panel.create_tween()
+	tween.tween_property(moves_panel, "scale", Vector2(1.035, 1.035), 0.10).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(moves_panel, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+func show_temporary_help(text: String, error: bool = false) -> void:
+	temporary_help_version += 1
+	var version := temporary_help_version
+	tutorial_help_label.visible = true
+	tutorial_help_label.modulate.a = 0.0
+	tutorial_help_label.text = text
+	apply_info_line_style(error)
+	var fade_in := tutorial_help_label.create_tween()
+	fade_in.tween_property(tutorial_help_label, "modulate:a", 1.0, 0.16)
+	await get_tree().create_timer(3.0).timeout
+	if version != temporary_help_version:
+		return
+	var fade_out := tutorial_help_label.create_tween()
+	fade_out.tween_property(tutorial_help_label, "modulate:a", 0.0, 0.14)
+	await fade_out.finished
+	if version != temporary_help_version:
+		return
+	tutorial_help_label.text = tutorial_help_text_current
+	tutorial_help_label.visible = true
+	apply_info_line_style(level_failed)
+	var fade_back := tutorial_help_label.create_tween()
+	fade_back.tween_property(tutorial_help_label, "modulate:a", 1.0, 0.16)
+
+func pop_goal_panel() -> void:
+	if goal_panel == null:
+		return
+	goal_panel.pivot_offset = goal_panel.size * 0.5
+	var tween := goal_panel.create_tween()
+	tween.tween_property(goal_panel, "scale", Vector2(1.035, 1.035), 0.10).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(goal_panel, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+func empty_panel_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(1, 1, 1, 0)
+	style.border_width_left = 0
+	style.border_width_right = 0
+	style.border_width_top = 0
+	style.border_width_bottom = 0
+	return style
 
 func set_orbit_items(items: Array) -> void:
 	var desired_ids: Dictionary = {}
@@ -250,6 +406,7 @@ func set_orbit_items(items: Array) -> void:
 			btn.pivot_offset = btn.size * 0.5
 			btn.add_theme_font_size_override("font_size", 46)
 			btn.pressed.connect(_on_orbit_button_pressed.bind(btn))
+			UIStyles.add_press_animation(btn)
 			orbit.add_child(btn)
 			is_new = true
 		btn.visible = true
@@ -318,6 +475,9 @@ func _on_orbit_button_pressed(button: Button) -> void:
 	var item_id := str(button.get_meta("id", ""))
 	if item_id.is_empty():
 		return
+	var tween := button.create_tween()
+	tween.tween_property(button, "scale", Vector2(0.90, 0.90), 0.055).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(button, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	orbit_pressed.emit(int(button.get_meta("value")), str(button.get_meta("op")), str(button.get_meta("id", "")))
 
 func _process(delta: float) -> void:
@@ -491,7 +651,7 @@ func show_insufficient_hint_balance(balance: int) -> void:
 	cached_popup_hint_text = ""
 	cached_popup_move_index = -1
 	hint_body_label.text = "Not enough bulbs for a hint."
-	hint_balance_label.text = "Balance: %d / 80 bulbs" % current_hint_points
+	hint_balance_label.text = "Balance: %d / %d bulbs" % [current_hint_points, GameState.HINT_COST]
 	hint_buy_button.visible = false
 	hint_ad_button.visible = true
 	hint_cancel_button.text = "Cancel"

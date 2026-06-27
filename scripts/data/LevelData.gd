@@ -14,6 +14,7 @@ static func get_levels() -> Array:
 	for i in range(levels.size()):
 		var data: Dictionary = (levels[i] as Dictionary).duplicate()
 		data["global_index"] = i + 1
+		data["id"] = level_id(str(data.get("difficulty", "level")), int(data.get("local_index", i + 1)))
 		levels[i] = data
 	return levels
 
@@ -159,10 +160,14 @@ static func difficulty_index_for_level(level_number: int) -> int:
 static func local_level_number(level_number: int) -> int:
 	return int(posmod(level_number - 1, LEVELS_PER_DIFFICULTY)) + 1
 
+static func level_id(difficulty: String, local_index: int) -> String:
+	return "%s_%03d" % [difficulty.to_lower(), local_index]
+
 static func tutorial_level(start: int, target: int, op: String, difficulty: String, thresholds: Array, turns: Array) -> Dictionary:
 	var data: Dictionary = level(start, start, target, thresholds, [op], turns)
 	data["tutorial_op"] = op
 	data["difficulty"] = difficulty
+	data["id"] = "tutorial_%s_%s" % [op, difficulty.to_lower()]
 	return data
 
 static func items(a: Array, b: Array = [], c: Array = [], d: Array = [], e: Array = [], f: Array = [], g: Array = [], h: Array = [], i: Array = [], j: Array = []) -> Array:

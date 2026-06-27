@@ -31,8 +31,12 @@ func _ready() -> void:
 	state.setup(LevelData.get_levels())
 	tutorial_levels = LevelData.get_tutorial_levels()
 	build()
-	load_level(1)
+	load_level(state.current_level)
 	show_main_menu()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED:
+		state.save_progress()
 
 func build() -> void:
 	bg = TextureRect.new()
@@ -49,6 +53,8 @@ func build() -> void:
 	main_menu.play_pressed.connect(_on_play_pressed)
 	main_menu.levels_pressed.connect(show_level_select)
 	main_menu.settings_pressed.connect(_on_main_settings_pressed)
+	main_menu.reset_progress_pressed.connect(_on_reset_progress_pressed)
+	main_menu.add_bulbs_pressed.connect(_on_add_bulbs_pressed)
 
 	level_select = get_or_create_screen("LevelSelect", LevelSelectScene) as LevelSelectScreen
 	level_select.back_pressed.connect(_on_level_select_back_pressed)
@@ -56,6 +62,8 @@ func build() -> void:
 
 	settings_screen = get_or_create_screen("SettingsScreen", SettingsScene) as SettingsScreen
 	settings_screen.back_pressed.connect(_on_settings_back_pressed)
+	settings_screen.volumes_changed.connect(_on_settings_volumes_changed)
+	settings_screen.configure(state.music_volume, state.sound_volume)
 
 	game_screen = get_or_create_screen("GameScreen", GameScreenScene) as GameScreen
 	game_screen.back_pressed.connect(_on_game_back_pressed)
@@ -130,21 +138,42 @@ func _on_main_settings_pressed() -> void:
 	return_to_game_after_settings = false
 	show_settings()
 
+func _on_reset_progress_pressed() -> void:
+	state.setup(LevelData.get_levels(), false)
+	tutorial_levels = LevelData.get_tutorial_levels()
+	settings_screen.configure(state.music_volume, state.sound_volume)
+	load_level(1)
+	state.save_progress()
+	show_main_menu()
+
+func _on_add_bulbs_pressed() -> void:
+	state.hint_points += 500
+	state.save_progress()
+	if main_menu != null:
+		main_menu.pulse_play_button()
+
 func _on_game_settings_pressed() -> void:
 	return_to_game_after_settings = true
 	show_settings()
 
 func _on_settings_back_pressed() -> void:
+	state.save_progress()
 	if return_to_game_after_settings:
 		return_to_game_after_settings = false
 		show_game()
 	else:
 		show_main_menu()
 
+func _on_settings_volumes_changed(music_value: int, sound_value: int) -> void:
+	state.music_volume = music_value
+	state.sound_volume = sound_value
+	state.save_progress()
+
 func _on_play_pressed() -> void:
 	if not state.has_played:
 		state.has_played = true
 		load_tutorial_level(0)
+		state.save_progress()
 	else:
 		load_level(state.current_level)
 	show_game()
@@ -162,6 +191,7 @@ func _on_level_selected(level_number: int) -> void:
 		return
 	load_level(level_number)
 	state.has_played = true
+	state.save_progress()
 	show_game()
 
 func _on_level_select_back_pressed() -> void:
@@ -383,12 +413,14 @@ func complete_level() -> void:
 	var stars: int = StarCalculator.calculate(state.moves_used, active_level_data())
 	if tutorial_mode:
 		state.set_tutorial_completed(tutorial_index)
+		state.save_progress()
 		refresh_game_screen()
 		complete_popup.show_result(active_level_title(), 0, state.moves_used, tutorial_index < tutorial_levels.size() - 1, -1, state.hint_points, false)
 		return
 	var reward: int = state.claim_level_reward(stars)
 	state.set_stars(stars)
 	state.unlock_next_level()
+	state.save_progress()
 	refresh_game_screen()
 	complete_popup.show_result(active_level_title(), stars, state.moves_used, state.current_level < LevelData.LEVEL_COUNT, reward, state.hint_points)
 
@@ -447,6 +479,7 @@ func _on_hint_requested() -> void:
 		return
 	if state.spend_hint():
 		state.cache_hint(hint_text)
+		state.save_progress()
 		game_screen.show_hint_result(hint_text, state.hint_points)
 		refresh_game_screen()
 
@@ -514,21 +547,22 @@ func active_level_title() -> String:
 		var difficulty: String = str(data.get("difficulty", ""))
 		return "TUTORIAL: %s %s" % [op.to_upper(), difficulty.to_upper()]
 	var data: Dictionary = active_level_data()
-	var difficulty: String = str(data.get("difficulty", "Level")).to_upper()
 	var local_level: int = int(data.get("local_index", LevelData.local_level_number(state.current_level)))
-	return "%s LEVEL %d" % [difficulty, local_level]
+	return "LEVEL %d" % local_level
 
 func _on_popup_next_pressed() -> void:
 	complete_popup.hide_popup()
 	if tutorial_mode:
 		if tutorial_index < tutorial_levels.size() - 1:
 			load_tutorial_level(tutorial_index + 1)
+			state.save_progress()
 			show_game()
 		else:
 			show_tutorial_difficulty_select(selected_tutorial_op)
 		return
 	if state.current_level < LevelData.LEVEL_COUNT:
 		load_level(state.current_level + 1)
+		state.save_progress()
 		show_game()
 	else:
 		show_level_select()
@@ -546,11 +580,19 @@ func tutorial_help_text(data: Dictionary) -> String:
 	var op: String = str(data.get("tutorial_op", "add"))
 	match op:
 		"add":
-			return "Add increases the center number. Pick numbers that build the target."
+			if state.moves_used == 0:
+				return "Tap a green orbit number. Add increases the center number toward the target."
+			return "Nice. Keep adding the right numbers until the center reaches the target."
 		"subtract":
-			return "Subtract decreases the center number. A grey button would go below 1."
+			if state.moves_used == 0:
+				return "Tap a yellow orbit number. Subtract lowers the center number."
+			return "Keep subtracting carefully. Grey buttons are unavailable moves."
 		"multiply":
-			return "Multiply makes the number bigger fast. Use the right factors in order."
+			if state.moves_used == 0:
+				return "Tap a red orbit number. Multiply grows the center number fast."
+			return "Great. Multiplication can jump quickly, so watch the target."
 		"divide":
-			return "Divide makes the number smaller. Only exact divisions are available."
+			if state.moves_used == 0:
+				return "Tap a blue orbit number. Divide only works when the result is exact."
+			return "Good. Only exact divisions stay available."
 	return "Choose orbit numbers to transform the center number into the target."
