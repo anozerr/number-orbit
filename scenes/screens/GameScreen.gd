@@ -12,6 +12,79 @@ signal hint_requested
 const SCREEN_CENTER := Vector2(540, 960)
 const ORBIT_RADIUS := 390
 
+class CoachDimMask:
+	extends ColorRect
+
+	var holes: Array[Dictionary] = []
+	var shader_material: ShaderMaterial
+
+	func _ready() -> void:
+		color = Color.WHITE
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		shader_material = ShaderMaterial.new()
+		var shader := Shader.new()
+		shader.code = """
+shader_type canvas_item;
+
+uniform vec4 dim_color : source_color = vec4(0.05, 0.06, 0.10, 0.42);
+uniform vec2 mask_size = vec2(1080.0, 1920.0);
+uniform int hole_count = 0;
+uniform vec4 hole_rects[16];
+uniform float hole_radii[16];
+
+float rounded_box_sdf(vec2 p, vec2 half_size, float radius) {
+	vec2 q = abs(p) - half_size + vec2(radius);
+	return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - radius;
+}
+
+void fragment() {
+	vec2 p = UV * mask_size;
+	float clear_amount = 0.0;
+	for (int i = 0; i < 16; i++) {
+		if (i >= hole_count) {
+			break;
+		}
+		vec4 rect = hole_rects[i];
+		vec2 half_size = rect.zw * 0.5;
+		vec2 center = rect.xy + half_size;
+		float radius = min(hole_radii[i], min(half_size.x, half_size.y));
+		float dist = rounded_box_sdf(p - center, half_size, radius);
+		clear_amount = max(clear_amount, 1.0 - smoothstep(-1.5, 1.5, dist));
+	}
+	COLOR = dim_color;
+	COLOR.a *= 1.0 - clear_amount;
+}
+"""
+		shader_material.shader = shader
+		material = shader_material
+		_update_shader()
+
+	func set_holes(next_holes: Array[Dictionary]) -> void:
+		holes = next_holes
+		_update_shader()
+
+	func _update_shader() -> void:
+		if shader_material == null:
+			return
+		var rects := PackedVector4Array()
+		var radii := PackedFloat32Array()
+		var count: int = min(holes.size(), 16)
+		for i in range(16):
+			if i < count:
+				var hole: Dictionary = holes[i]
+				var rect := Rect2()
+				if hole.has("rect"):
+					rect = hole["rect"]
+				rects.append(Vector4(rect.position.x, rect.position.y, rect.size.x, rect.size.y))
+				radii.append(float(hole.get("radius", 0.0)))
+			else:
+				rects.append(Vector4.ZERO)
+				radii.append(0.0)
+		shader_material.set_shader_parameter("mask_size", size)
+		shader_material.set_shader_parameter("hole_count", count)
+		shader_material.set_shader_parameter("hole_rects", rects)
+		shader_material.set_shader_parameter("hole_radii", radii)
+
 var center_label: Label
 var level_label: Label
 var task_label: Label
@@ -51,6 +124,15 @@ var tutorial_help_text_current := ""
 var temporary_help_version := 0
 var bulbs_button_icon: TextureRect
 var bulbs_button_label: Label
+var coach_overlay: Control
+var coach_dim_mask: CoachDimMask
+var coach_panel: Panel
+var coach_label: Label
+var coach_version := 0
+var coach_steps: Array = []
+var coach_step_index := 0
+var info_text_tween: Tween
+var info_line_error_state: Variant = null
 
 func _ready() -> void:
 	build()
@@ -212,8 +294,9 @@ func build() -> void:
 	add_child(orbit)
 
 	build_hint_popup()
+	build_coach_overlay()
 
-func configure(title_text: String, current_number: int, target_number: int, moves: int, thresholds: Array, orbit_items: Array, allowed_ops: Array, failed: bool, hint_points: int, tutorial: bool = false, tutorial_help: String = "") -> void:
+func configure(title_text: String, current_number: int, target_number: int, moves: int, thresholds: Array, orbit_items: Array, allowed_ops: Array, failed: bool, hint_points: int, tutorial: bool = false, tutorial_help: String = "", coach_hint: Dictionary = {}) -> void:
 	level_failed = failed
 	current_number_value = current_number
 	current_hint_points = hint_points
@@ -231,8 +314,11 @@ func configure(title_text: String, current_number: int, target_number: int, move
 	tutorial_help_text_current = fail_comment_text() if failed else (tutorial_help if tutorial else progress_comment_text(moves))
 	tutorial_help_label.visible = true
 	tutorial_help_label.modulate.a = 1.0
-	tutorial_help_label.text = tutorial_help_text_current
+	if info_text_tween != null and info_text_tween.is_valid():
+		info_text_tween.kill()
 	apply_info_line_style(failed)
+	set_info_text_alpha(1.0, failed)
+	tutorial_help_label.text = tutorial_help_text_current
 	center_label.text = str(current_number)
 	if last_center_number != current_number:
 		pop_center_number()
@@ -242,7 +328,7 @@ func configure(title_text: String, current_number: int, target_number: int, move
 	moves_panel.visible = not tutorial
 	goal_divider.visible = not tutorial
 	goal_label.size = Vector2(800 if tutorial else 400, 88)
-	status_label.text = "No valid moves left — try Restart or use a Hint." if level_failed else ""
+	status_label.text = "No valid moves left — tap Restart." if level_failed else ""
 	status_label.visible = false
 	operation_legend.configure_ops(allowed_ops)
 	operation_legend.visible = true
@@ -264,6 +350,10 @@ func configure(title_text: String, current_number: int, target_number: int, move
 		pulse_failure_controls()
 	previous_failed_state = level_failed
 	set_orbit_items(orbit_items)
+	if tutorial and not coach_hint.is_empty():
+		show_coach_hint(coach_hint)
+	else:
+		hide_coach_hint()
 	queue_redraw()
 
 func pop_center_number() -> void:
@@ -304,6 +394,8 @@ func _on_goal_panel_input(event: InputEvent) -> void:
 func star_requirements_text() -> String:
 	if current_thresholds.size() < 3:
 		return "Use fewer moves to earn more stars."
+	if current_thresholds[0] == current_thresholds[1] and current_thresholds[1] == current_thresholds[2]:
+		return "These early levels are simple: finish the target and you keep three stars."
 	return "★★★ %d moves    ★★ %d moves    ★ %d moves" % [int(current_thresholds[0]), int(current_thresholds[1]), int(current_thresholds[2])]
 
 func progress_comment_text(moves: int) -> String:
@@ -320,20 +412,23 @@ func progress_comment_text(moves: int) -> String:
 	return "Almost there. Finish the target with the moves you have left."
 
 func fail_comment_text() -> String:
-	return "No valid moves left — tap Restart or use a Hint."
+	return "No valid moves left — tap Restart."
 
 func apply_info_line_style(error: bool = false) -> void:
+	if info_line_error_state != null and bool(info_line_error_state) == error:
+		return
 	if error:
 		tutorial_help_label.add_theme_stylebox_override("normal", UIStyles.card(Color("#FFF1F1"), Color("#F5B5B5"), 24))
 		UIStyles.apply_font(tutorial_help_label, UIStyles.FONT_SEMIBOLD, 24, Color("#C82424"))
 	else:
 		UIStyles.pill(tutorial_help_label)
 		UIStyles.apply_font(tutorial_help_label, UIStyles.FONT_MEDIUM, 24, UIStyles.MUTED)
+	info_line_error_state = error
 
 func update_hint_button_label(hint_points: int) -> void:
 	if bulbs_button_label == null:
 		return
-	bulbs_button_label.text = "Hint  %d/%d" % [hint_points, GameState.HINT_COST]
+	bulbs_button_label.text = "Hint"
 	var label_width: float = bulbs_button_label.get_theme_font("font").get_string_size(bulbs_button_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, bulbs_button_label.get_theme_font_size("font_size")).x
 	var group_width := 34.0 + 12.0 + label_width
 	if bulbs_button_icon != null:
@@ -353,24 +448,37 @@ func show_temporary_help(text: String, error: bool = false) -> void:
 	temporary_help_version += 1
 	var version := temporary_help_version
 	tutorial_help_label.visible = true
-	tutorial_help_label.modulate.a = 0.0
-	tutorial_help_label.text = text
+	if info_text_tween != null and info_text_tween.is_valid():
+		info_text_tween.kill()
 	apply_info_line_style(error)
-	var fade_in := tutorial_help_label.create_tween()
-	fade_in.tween_property(tutorial_help_label, "modulate:a", 1.0, 0.16)
+	info_text_tween = tutorial_help_label.create_tween()
+	info_text_tween.tween_method(set_info_text_alpha.bind(error), 1.0, 0.34, 0.09).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	await info_text_tween.finished
+	if version != temporary_help_version:
+		return
+	tutorial_help_label.text = text
+	set_info_text_alpha(0.34, error)
+	info_text_tween = tutorial_help_label.create_tween()
+	info_text_tween.tween_method(set_info_text_alpha.bind(error), 0.34, 1.0, 0.15).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	await get_tree().create_timer(3.0).timeout
 	if version != temporary_help_version:
 		return
-	var fade_out := tutorial_help_label.create_tween()
-	fade_out.tween_property(tutorial_help_label, "modulate:a", 0.0, 0.14)
-	await fade_out.finished
+	info_text_tween = tutorial_help_label.create_tween()
+	info_text_tween.tween_method(set_info_text_alpha.bind(error), 1.0, 0.34, 0.09).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	await info_text_tween.finished
 	if version != temporary_help_version:
 		return
 	tutorial_help_label.text = tutorial_help_text_current
 	tutorial_help_label.visible = true
 	apply_info_line_style(level_failed)
-	var fade_back := tutorial_help_label.create_tween()
-	fade_back.tween_property(tutorial_help_label, "modulate:a", 1.0, 0.16)
+	set_info_text_alpha(0.34, level_failed)
+	info_text_tween = tutorial_help_label.create_tween()
+	info_text_tween.tween_method(set_info_text_alpha.bind(level_failed), 0.34, 1.0, 0.15).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+func set_info_text_alpha(alpha: float, error: bool = false) -> void:
+	var color := Color("#C82424") if error else UIStyles.MUTED
+	color.a = alpha
+	tutorial_help_label.add_theme_color_override("font_color", color)
 
 func pop_goal_panel() -> void:
 	if goal_panel == null:
@@ -483,7 +591,11 @@ func _on_orbit_button_pressed(button: Button) -> void:
 func _process(delta: float) -> void:
 	if not visible:
 		return
-	orbit_angle += delta * 0.25
+	if coach_overlay != null and coach_overlay.visible:
+		queue_redraw()
+		return
+	var speed := 0.25
+	orbit_angle += delta * speed
 	update_orbit_positions(false)
 	queue_redraw()
 
@@ -662,3 +774,183 @@ func clear_hint_cache() -> void:
 	cached_popup_move_index = -1
 	if hint_popup != null:
 		hint_popup.visible = false
+
+func build_coach_overlay() -> void:
+	coach_overlay = Control.new()
+	coach_overlay.position = Vector2.ZERO
+	coach_overlay.size = Vector2(1080, 1920)
+	coach_overlay.visible = false
+	coach_overlay.z_index = 90
+	coach_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	coach_overlay.gui_input.connect(_on_coach_overlay_input)
+	add_child(coach_overlay)
+
+	coach_dim_mask = CoachDimMask.new()
+	coach_dim_mask.position = Vector2.ZERO
+	coach_dim_mask.size = Vector2(1080, 1920)
+	coach_dim_mask.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	coach_overlay.add_child(coach_dim_mask)
+
+	coach_panel = Panel.new()
+	coach_panel.size = Vector2(760, 112)
+	coach_panel.add_theme_stylebox_override("panel", UIStyles.soft_panel(Color.WHITE, 26))
+	coach_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	coach_panel.z_index = 2
+	coach_overlay.add_child(coach_panel)
+
+	coach_label = Label.new()
+	coach_label.position = Vector2(34, 16)
+	coach_label.size = Vector2(692, 80)
+	coach_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	coach_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	coach_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	UIStyles.apply_font(coach_label, UIStyles.FONT_SEMIBOLD, 24, UIStyles.TEXT)
+	coach_panel.add_child(coach_label)
+
+func show_coach_hint(coach_hint: Dictionary) -> void:
+	if coach_overlay == null:
+		return
+	coach_version += 1
+	coach_steps.clear()
+	if coach_hint.has("steps"):
+		for step in coach_hint["steps"] as Array:
+			coach_steps.append(step)
+	else:
+		coach_steps.append(coach_hint)
+	coach_step_index = 0
+	apply_coach_step()
+	coach_overlay.visible = true
+	coach_overlay.modulate.a = 0.0
+	var tween := coach_overlay.create_tween()
+	tween.tween_property(coach_overlay, "modulate:a", 1.0, 0.18).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+func apply_coach_step() -> void:
+	if coach_step_index < 0 or coach_step_index >= coach_steps.size():
+		hide_coach_hint()
+		return
+	var step: Dictionary = coach_steps[coach_step_index] as Dictionary
+	var area := str(step.get("area", "target"))
+	var rect := coach_rect_for_area(area)
+	if coach_dim_mask != null:
+		coach_dim_mask.set_holes(coach_holes_for_area(area, rect))
+	coach_label.text = str(step.get("text", ""))
+	coach_panel.position = coach_panel_position_for_rect(rect)
+
+func coach_holes_for_area(area: String, fallback: Rect2) -> Array[Dictionary]:
+	var holes: Array[Dictionary] = []
+	match area:
+		"none":
+			return holes
+		"center":
+			holes.append({"rect": fallback.grow(4), "radius": fallback.size.x * 0.5 + 4.0})
+		"orbit_buttons":
+			for orbit_rect in visible_orbit_button_rects(false):
+				holes.append({"rect": orbit_rect.grow(8), "radius": orbit_rect.size.x * 0.5 + 8.0})
+		"invalid_orbit":
+			for invalid_rect in visible_orbit_button_rects(true):
+				holes.append({"rect": invalid_rect.grow(8), "radius": invalid_rect.size.x * 0.5 + 8.0})
+		"target":
+			holes.append({"rect": fallback.grow(5), "radius": 32.0})
+		"op_add", "op_subtract", "op_multiply", "op_divide", "op_unavailable", "hint":
+			holes.append({"rect": fallback.grow(5), "radius": 20.0})
+		_:
+			if fallback.size != Vector2.ZERO:
+				holes.append({"rect": fallback.grow(5), "radius": 26.0})
+	return holes
+
+func _on_coach_overlay_input(event: InputEvent) -> void:
+	var mouse_event := event as InputEventMouseButton
+	if mouse_event == null or not mouse_event.pressed:
+		return
+	coach_step_index += 1
+	if coach_step_index >= coach_steps.size():
+		hide_coach_hint()
+	else:
+		apply_coach_step()
+
+func fade_coach_overlay_out(version: int) -> void:
+	var fade := coach_overlay.create_tween()
+	fade.tween_property(coach_overlay, "modulate:a", 0.0, 0.22).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	await fade.finished
+	if version == coach_version:
+		coach_overlay.visible = false
+
+func hide_coach_hint() -> void:
+	coach_version += 1
+	if coach_overlay != null:
+		if coach_overlay.visible:
+			fade_coach_overlay_out(coach_version)
+		else:
+			coach_overlay.visible = false
+
+func coach_rect_for_area(area: String) -> Rect2:
+	match area:
+		"target":
+			return Rect2(Vector2(140, 152), Vector2(800, 88))
+		"center":
+			return Rect2(SCREEN_CENTER - Vector2(176, 176), Vector2(352, 352))
+		"orbit":
+			return Rect2(Vector2(100, 520), Vector2(880, 880))
+		"orbit_buttons":
+			return combined_rect(visible_orbit_button_rects(false), Rect2(Vector2(100, 520), Vector2(880, 880))).grow(12)
+		"invalid_orbit":
+			return combined_rect(visible_orbit_button_rects(true), Rect2(Vector2(100, 520), Vector2(880, 880))).grow(12)
+		"ops":
+			return Rect2(Vector2(55, 1638), Vector2(970, 235))
+		"op_add":
+			return operation_card_rect(0)
+		"op_subtract":
+			return operation_card_rect(1)
+		"op_multiply":
+			return operation_card_rect(2)
+		"op_divide":
+			return operation_card_rect(3)
+		"op_unavailable":
+			return operation_card_rect(4)
+		"hint":
+			return Rect2(Vector2(70, 1534), Vector2(455, 68))
+	return Rect2(Vector2(140, 152), Vector2(800, 88))
+
+func visible_orbit_button_rects(only_invalid: bool) -> Array[Rect2]:
+	var rects: Array[Rect2] = []
+	if orbit == null:
+		return rects
+	for child in orbit.get_children():
+		var btn := child as Button
+		if btn == null or not btn.visible:
+			continue
+		var is_invalid := btn.disabled
+		if only_invalid and not is_invalid:
+			continue
+		if not only_invalid and is_invalid:
+			continue
+		rects.append(Rect2(btn.position, btn.size).grow(4))
+	return rects
+
+func first_invalid_orbit_button_rect() -> Rect2:
+	var rects := visible_orbit_button_rects(true)
+	return rects[0] if not rects.is_empty() else Rect2()
+
+func combined_rect(rects: Array[Rect2], fallback: Rect2) -> Rect2:
+	if rects.is_empty():
+		return fallback
+	var result := rects[0]
+	for i in range(1, rects.size()):
+		result = result.merge(rects[i])
+	return result
+
+func operation_card_rect(index: int) -> Rect2:
+	const CARD_SIZE := Vector2(304, 74)
+	const CARD_GAP := 28.0
+	var local_pos := Vector2.ZERO
+	if index < 3:
+		local_pos = Vector2(index * (CARD_SIZE.x + CARD_GAP), 48)
+	else:
+		local_pos = Vector2((index - 3) * (CARD_SIZE.x + CARD_GAP) + (CARD_SIZE.x + CARD_GAP) * 0.5, 138)
+	return Rect2(operation_legend.position + local_pos, CARD_SIZE)
+
+func coach_panel_position_for_rect(rect: Rect2) -> Vector2:
+	var y := rect.position.y + rect.size.y + 24.0
+	if y + coach_panel.size.y > 1500:
+		y = rect.position.y - coach_panel.size.y - 24.0
+	return Vector2(clamp(rect.get_center().x - coach_panel.size.x * 0.5, 45.0, 1080.0 - coach_panel.size.x - 45.0), y)

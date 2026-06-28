@@ -8,6 +8,8 @@ signal reset_progress_pressed
 signal add_bulbs_pressed
 
 var play_button: Button
+var levels_button: Button
+var levels_icon: TextureRect
 var logo_orbit_rect: TextureRect
 var logo_orbit_base_position := Vector2.ZERO
 var logo_time := 0.0
@@ -59,15 +61,15 @@ func build() -> void:
 	add_child(play_button)
 	UIStyles.icon(UIStyles.ICON_PLAY_WHITE, play_button, Vector2(240, 39), Vector2(42, 42), Color.WHITE)
 
-	var levels_btn := Button.new()
-	levels_btn.text = "        Levels"
-	levels_btn.position = Vector2(170, 1200)
-	levels_btn.size = Vector2(740, 110)
-	levels_btn.add_theme_font_size_override("font_size", 38)
-	UIStyles.menu_button(levels_btn)
-	levels_btn.pressed.connect(func(): levels_pressed.emit())
-	add_child(levels_btn)
-	UIStyles.icon(UIStyles.ICON_LEVELS, levels_btn, Vector2(240, 36), Vector2(38, 38), UIStyles.TEXT)
+	levels_button = Button.new()
+	levels_button.text = "        Levels"
+	levels_button.position = Vector2(170, 1200)
+	levels_button.size = Vector2(740, 110)
+	levels_button.add_theme_font_size_override("font_size", 38)
+	UIStyles.menu_button(levels_button)
+	levels_button.pressed.connect(func(): levels_pressed.emit())
+	add_child(levels_button)
+	levels_icon = UIStyles.icon(UIStyles.ICON_LEVELS, levels_button, Vector2(240, 36), Vector2(38, 38), UIStyles.TEXT)
 
 	var settings_btn := Button.new()
 	settings_btn.text = "        Settings"
@@ -95,10 +97,33 @@ func build() -> void:
 	bulbs_btn.pressed.connect(func(): add_bulbs_pressed.emit())
 	add_child(bulbs_btn)
 
-func set_continue_mode(has_played: bool, current_level: int) -> void:
+func set_continue_mode(has_played: bool, current_level: int, tutorials_complete: bool = true) -> void:
 	if play_button == null:
 		return
 	play_button.text = "        Continue" if has_played and current_level > 1 else "        Play"
+	set_levels_enabled(tutorials_complete)
+
+func set_levels_enabled(enabled: bool) -> void:
+	if levels_button == null:
+		return
+	levels_button.disabled = not enabled
+	var color := UIStyles.TEXT if enabled else UIStyles.DISABLED
+	var style := UIStyles.soft_panel(Color.WHITE if enabled else Color("#F2F3F5"), 30)
+	if not enabled:
+		style.border_color = Color("#E1E4EA")
+		style.shadow_color = Color(0, 0, 0, 0.025)
+	var hover := style.duplicate() as StyleBoxFlat
+	var pressed := style.duplicate() as StyleBoxFlat
+	levels_button.add_theme_stylebox_override("normal", style)
+	levels_button.add_theme_stylebox_override("hover", hover)
+	levels_button.add_theme_stylebox_override("pressed", pressed)
+	levels_button.add_theme_stylebox_override("disabled", style)
+	levels_button.add_theme_color_override("font_color", color)
+	levels_button.add_theme_color_override("font_hover_color", color)
+	levels_button.add_theme_color_override("font_pressed_color", color)
+	levels_button.add_theme_color_override("font_disabled_color", UIStyles.DISABLED)
+	if levels_icon != null:
+		levels_icon.modulate = color
 
 func pulse_play_button() -> void:
 	if play_button == null:

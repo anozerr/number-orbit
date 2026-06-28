@@ -90,10 +90,10 @@ func build() -> void:
 	levels_button.pressed.connect(func(): levels_pressed.emit())
 	panel.add_child(levels_button)
 
-func show_result(title_text: String, stars: int, moves: int, has_next: bool, reward: int = 0, hint_points: int = 0, show_details: bool = true) -> void:
-	title_label.text = "%s\nCOMPLETE!" % title_text
+func show_result(title_text: String, stars: int, moves: int, has_next: bool, reward: int = 0, hint_points: int = 0, show_details: bool = true, tutorial_message: String = "") -> void:
+	title_label.text = "%s\nCOMPLETE!" % title_text if show_details else "Excellent!"
 	stars_label.visible = show_details
-	moves_label.visible = true
+	moves_label.visible = show_details
 	reward_label.visible = true
 	if show_details:
 		title_label.position = Vector2(0, 105)
@@ -112,21 +112,20 @@ func show_result(title_text: String, stars: int, moves: int, has_next: bool, rew
 		else:
 			reward_label.text = "Best reward already claimed\nBalance: %d" % hint_points
 	else:
-		title_label.position = Vector2(0, 95)
-		title_label.size = Vector2(900, 118)
+		title_label.position = Vector2(0, 130)
+		title_label.size = Vector2(900, 80)
 		draw_star_row(0)
-		moves_label.position = Vector2(0, 275)
-		moves_label.text = "Moves: %d" % moves
-		reward_label.position = Vector2(90, 340)
-		reward_label.size = Vector2(720, 76)
-		reward_label.text = "Tutorials teach the operators.\nNo bulb reward is given here."
-		next_button.position = Vector2(145, 525)
+		reward_label.position = Vector2(110, 270)
+		reward_label.size = Vector2(680, 150)
+		reward_label.text = tutorial_message if not tutorial_message.is_empty() else "Good. Continue to the next idea."
+		next_button.position = Vector2(145, 545)
 		next_button.size = Vector2(610, 100)
-		levels_button.position = Vector2(145, 665)
-		levels_button.size = Vector2(610, 82)
-	next_button.text = "Next Level" if show_details else "Next Tutorial"
+		levels_button.visible = false
+	next_button.text = "Next Level" if show_details else "Continue"
 	levels_button.text = "Back to Levels" if show_details else "Back to All Levels"
 	next_button.visible = has_next
+	if show_details:
+		levels_button.visible = true
 	visible = true
 	animate_open()
 

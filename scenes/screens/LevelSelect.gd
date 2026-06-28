@@ -46,14 +46,15 @@ func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tu
 	var y := 20.0
 	y = add_tutorials_section(content, y, tutorial_completed)
 	y += 95.0
+	var tutorials_done := are_all_tutorials_completed(tutorial_completed)
 	for difficulty_index in range(LevelData.DIFFICULTIES.size()):
-		y = add_difficulty_section(content, difficulty_index, y, star_ratings, max_unlocked_level)
+		y = add_difficulty_section(content, difficulty_index, y, star_ratings, max_unlocked_level, tutorials_done)
 		y += 95.0
 	content.custom_minimum_size = Vector2(1080, y - 95.0)
 
 func add_tutorials_section(parent: Control, y: float, tutorial_completed: Array) -> float:
 	var title := Label.new()
-	title.text = "TUTORIALS"
+	title.text = "TUTORIAL"
 	title.position = Vector2(0, y)
 	title.size = Vector2(1080, 62)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -61,46 +62,46 @@ func add_tutorials_section(parent: Control, y: float, tutorial_completed: Array)
 	UIStyles.apply_font(title, UIStyles.FONT_BOLD, 38, UIStyles.PURPLE)
 	parent.add_child(title)
 
-	var ops := ["add", "subtract", "multiply", "divide"]
-	var names := ["Add", "Subtract", "Multiply", "Divide"]
-	var start_x := 160
 	var start_y := y + 88.0
-	var gap_x := 210
-	var button_size := Vector2(170, 170)
+	var button_size := Vector2(760, 160)
+	var completed := are_all_tutorials_completed(tutorial_completed)
+	var btn := Button.new()
+	btn.text = ""
+	btn.size = button_size
+	btn.position = Vector2((1080 - button_size.x) * 0.5, start_y)
+	btn.add_theme_font_size_override("font_size", 30)
+	style_tutorial_button(btn, "add", completed, true)
+	UIStyles.add_press_animation(btn)
+	btn.pressed.connect(_on_level_button_pressed.bind(-1))
+	parent.add_child(btn)
 
-	for i in range(ops.size()):
-		var op: String = str(ops[i])
-		var completed := is_tutorial_op_completed(tutorial_completed, i)
-		var unlocked := true
-		var btn := Button.new()
-		btn.text = ""
-		btn.size = button_size
-		btn.position = Vector2(start_x + i * gap_x, start_y)
-		btn.add_theme_font_size_override("font_size", 26)
-		btn.disabled = not unlocked
-		style_tutorial_button(btn, op, completed, unlocked)
-		UIStyles.add_press_animation(btn)
-		if unlocked:
-			btn.pressed.connect(_on_level_button_pressed.bind(-(i + 1)))
-		parent.add_child(btn)
+	var icon_texture: Texture2D = UIStyles.ICON_CHECK if completed else UIStyles.ICON_BULB
+	var icon_color: Color = Color("#0F6B25") if completed else UIStyles.PURPLE
+	UIStyles.icon(icon_texture, btn, Vector2(72, 51), Vector2(58, 58), icon_color)
 
-		var icon_texture: Texture2D = UIStyles.ICON_CHECK if completed else UIStyles.operation_icon(op)
-		var icon_color: Color = Color("#0F6B25") if completed else (UIStyles.operation_text(op) if unlocked else UIStyles.DISABLED)
-		UIStyles.icon(icon_texture, btn, Vector2(56, 35), Vector2(58, 58), icon_color)
+	var name_lbl := Label.new()
+	name_lbl.text = "How to Play"
+	name_lbl.position = Vector2(155, 32)
+	name_lbl.size = Vector2(500, 56)
+	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(name_lbl, UIStyles.FONT_BOLD, 38, Color("#0F6B25") if completed else UIStyles.TEXT)
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	btn.add_child(name_lbl)
 
-		var name_lbl := Label.new()
-		name_lbl.text = str(names[i])
-		name_lbl.position = Vector2(0, 98)
-		name_lbl.size = Vector2(button_size.x, 44)
-		name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		UIStyles.apply_font(name_lbl, UIStyles.FONT_BOLD, 24, Color("#0F6B25") if completed else (UIStyles.TEXT if unlocked else UIStyles.DISABLED))
-		name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		btn.add_child(name_lbl)
+	var desc_lbl := Label.new()
+	desc_lbl.text = "Target, orbit, operators, hints and move order"
+	desc_lbl.position = Vector2(155, 86)
+	desc_lbl.size = Vector2(540, 42)
+	desc_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	desc_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(desc_lbl, UIStyles.FONT_MEDIUM, 22, UIStyles.MUTED)
+	desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	btn.add_child(desc_lbl)
 
 	return start_y + button_size.y
 
-func add_difficulty_section(parent: Control, difficulty_index: int, y: float, star_ratings: Array, max_unlocked_level: int) -> float:
+func add_difficulty_section(parent: Control, difficulty_index: int, y: float, star_ratings: Array, max_unlocked_level: int, tutorials_done: bool = true) -> float:
 	var title := Label.new()
 	title.text = str(LevelData.DIFFICULTIES[difficulty_index]).to_upper()
 	title.position = Vector2(0, y)
@@ -119,7 +120,7 @@ func add_difficulty_section(parent: Control, difficulty_index: int, y: float, st
 	for i in range(LevelData.LEVELS_PER_DIFFICULTY):
 		var local_level: int = i + 1
 		var global_level: int = difficulty_index * LevelData.LEVELS_PER_DIFFICULTY + local_level
-		var unlocked: bool = global_level <= max_unlocked_level
+		var unlocked: bool = tutorials_done and global_level <= max_unlocked_level
 		var rating: int = int(star_ratings[global_level - 1]) if global_level - 1 < star_ratings.size() else 0
 		var completed: bool = rating > 0
 		var btn := Button.new()
@@ -389,8 +390,7 @@ func tutorial_description(index: int) -> String:
 	return ""
 
 func style_level_button(button: Button, completed: bool, unlocked: bool, difficulty_index: int = 0) -> void:
-	var section_color: Color = difficulty_color(difficulty_index)
-	var normal: StyleBoxFlat = UIStyles.card(Color("#EFFBEA") if completed else section_color.lightened(0.89), Color("#9EDB8F") if completed else section_color.lightened(0.35), 24)
+	var normal: StyleBoxFlat = UIStyles.card(Color("#EFFBEA") if completed else Color("#FDFCFA"), Color("#9EDB8F") if completed else UIStyles.BORDER, 24)
 	if not unlocked:
 		normal.bg_color = Color("#FDFCFA")
 		normal.border_color = UIStyles.BORDER

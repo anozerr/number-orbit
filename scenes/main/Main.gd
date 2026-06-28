@@ -18,6 +18,7 @@ var selected_level_difficulty: int = 0
 var tutorial_index: int = 0
 var return_to_game_after_settings: bool = false
 var orbit_input_locked: bool = false
+var shown_tutorial_coaches: Dictionary = {}
 
 var bg: TextureRect
 var main_menu: MainMenuScreen
@@ -95,7 +96,7 @@ func hide_all() -> void:
 func show_main_menu() -> void:
 	hide_all()
 	main_menu.visible = true
-	main_menu.set_continue_mode(state.has_played, state.current_level)
+	main_menu.set_continue_mode(state.has_played, state.current_level, state.are_all_tutorials_completed())
 
 func show_level_select() -> void:
 	tutorial_mode = false
@@ -170,9 +171,9 @@ func _on_settings_volumes_changed(music_value: int, sound_value: int) -> void:
 	state.save_progress()
 
 func _on_play_pressed() -> void:
-	if not state.has_played:
+	if not state.are_all_tutorials_completed():
 		state.has_played = true
-		load_tutorial_level(0)
+		load_tutorial_level(first_unfinished_tutorial_index(), true)
 		state.save_progress()
 	else:
 		load_level(state.current_level)
@@ -183,11 +184,14 @@ func _on_level_selected(level_number: int) -> void:
 		if tutorial_select_page == "ops":
 			show_tutorial_difficulty_select(level_number - 1)
 		else:
-			load_tutorial_level(selected_tutorial_op * 3 + level_number - 1)
+			load_tutorial_level(selected_tutorial_op * 3 + level_number - 1, true)
 			show_game()
 		return
 	if level_number < 0:
-		show_tutorial_difficulty_select(-level_number - 1)
+		load_tutorial_level(first_unfinished_tutorial_index(), true)
+		state.has_played = true
+		state.save_progress()
+		show_game()
 		return
 	load_level(level_number)
 	state.has_played = true
@@ -202,7 +206,10 @@ func _on_level_select_back_pressed() -> void:
 
 func _on_game_back_pressed() -> void:
 	if tutorial_mode:
-		show_level_select()
+		if state.are_all_tutorials_completed():
+			show_level_select()
+		else:
+			show_main_menu()
 	else:
 		show_level_select()
 
@@ -215,11 +222,12 @@ func load_level(level_number: int) -> void:
 		game_screen.clear_hint_cache()
 		game_screen.clear_orbit_buttons()
 
-func load_tutorial_level(index: int) -> void:
+func load_tutorial_level(index: int, reset_coach_memory: bool = true) -> void:
 	tutorial_mode = true
 	tutorial_index = int(clamp(index, 0, tutorial_levels.size() - 1))
-	selected_tutorial_op = int(float(tutorial_index) / 3.0)
 	var data: Dictionary = tutorial_levels[tutorial_index]
+	if reset_coach_memory:
+		clear_tutorial_coach_memory(str(data.get("id", "tutorial")))
 	state.current_number = int(data["start"])
 	state.target_number = int(data["target"])
 	state.moves_used = 0
@@ -229,6 +237,18 @@ func load_tutorial_level(index: int) -> void:
 	if game_screen != null:
 		game_screen.clear_hint_cache()
 		game_screen.clear_orbit_buttons()
+
+func first_unfinished_tutorial_index() -> int:
+	for i in range(tutorial_levels.size()):
+		if not state.is_tutorial_completed(i):
+			return i
+	return 0
+
+func clear_tutorial_coach_memory(tutorial_id: String) -> void:
+	var prefix := "%s:" % tutorial_id
+	for key in shown_tutorial_coaches.keys():
+		if str(key).begins_with(prefix):
+			shown_tutorial_coaches.erase(key)
 
 func assign_orbit_slots(items: Array) -> Array:
 	var result: Array = []
@@ -349,7 +369,7 @@ func orbit_angle_for_slot(slot: int, slot_count: int) -> float:
 
 func restart_level() -> void:
 	if tutorial_mode:
-		load_tutorial_level(tutorial_index)
+		load_tutorial_level(tutorial_index, false)
 	else:
 		load_level(state.current_level)
 	show_game()
@@ -357,7 +377,9 @@ func restart_level() -> void:
 func refresh_game_screen() -> void:
 	var data: Dictionary = active_level_data()
 	var thresholds: Array = StarCalculator.sorted_thresholds(data)
-	game_screen.configure(active_level_title(), state.current_number, state.target_number, state.moves_used, thresholds, visible_orbit_items(), data["allowed_ops"] as Array, state.is_level_failed, state.hint_points, tutorial_mode, tutorial_help_text(data))
+	if not tutorial_mode and str(data.get("difficulty", "")) == "Easy":
+		thresholds = [999, 999, 999]
+	game_screen.configure(active_level_title(), state.current_number, state.target_number, state.moves_used, thresholds, visible_orbit_items(), data["allowed_ops"] as Array, state.is_level_failed, state.hint_points, tutorial_mode, tutorial_help_text(data), tutorial_coach_data(data))
 
 func visible_orbit_items() -> Array:
 	var result: Array = []
@@ -415,7 +437,8 @@ func complete_level() -> void:
 		state.set_tutorial_completed(tutorial_index)
 		state.save_progress()
 		refresh_game_screen()
-		complete_popup.show_result(active_level_title(), 0, state.moves_used, tutorial_index < tutorial_levels.size() - 1, -1, state.hint_points, false)
+		var teaser := str(active_level_data().get("complete_teaser", "Excellent. Continue when you are ready."))
+		complete_popup.show_result(active_level_title(), 0, state.moves_used, true, -1, state.hint_points, false, teaser)
 		return
 	var reward: int = state.claim_level_reward(stars)
 	state.set_stars(stars)
@@ -543,22 +566,18 @@ func active_level_data() -> Dictionary:
 func active_level_title() -> String:
 	if tutorial_mode:
 		var data: Dictionary = active_level_data()
-		var op: String = str(data.get("tutorial_op", (data["allowed_ops"] as Array)[0]))
-		var difficulty: String = str(data.get("difficulty", ""))
-		return "TUTORIAL: %s %s" % [op.to_upper(), difficulty.to_upper()]
-	var data: Dictionary = active_level_data()
-	var local_level: int = int(data.get("local_index", LevelData.local_level_number(state.current_level)))
-	return "LEVEL %d" % local_level
+		return str(data.get("title", "TUTORIAL"))
+	return "LEVEL %d" % state.current_level
 
 func _on_popup_next_pressed() -> void:
 	complete_popup.hide_popup()
 	if tutorial_mode:
 		if tutorial_index < tutorial_levels.size() - 1:
-			load_tutorial_level(tutorial_index + 1)
+			load_tutorial_level(tutorial_index + 1, true)
 			state.save_progress()
 			show_game()
 		else:
-			show_tutorial_difficulty_select(selected_tutorial_op)
+			show_level_select()
 		return
 	if state.current_level < LevelData.LEVEL_COUNT:
 		load_level(state.current_level + 1)
@@ -577,22 +596,31 @@ func _on_popup_levels_pressed() -> void:
 func tutorial_help_text(data: Dictionary) -> String:
 	if not tutorial_mode:
 		return ""
-	var op: String = str(data.get("tutorial_op", "add"))
-	match op:
-		"add":
-			if state.moves_used == 0:
-				return "Tap a green orbit number. Add increases the center number toward the target."
-			return "Nice. Keep adding the right numbers until the center reaches the target."
-		"subtract":
-			if state.moves_used == 0:
-				return "Tap a yellow orbit number. Subtract lowers the center number."
-			return "Keep subtracting carefully. Grey buttons are unavailable moves."
-		"multiply":
-			if state.moves_used == 0:
-				return "Tap a red orbit number. Multiply grows the center number fast."
-			return "Great. Multiplication can jump quickly, so watch the target."
-		"divide":
-			if state.moves_used == 0:
-				return "Tap a blue orbit number. Divide only works when the result is exact."
-			return "Good. Only exact divisions stay available."
-	return "Choose orbit numbers to transform the center number into the target."
+	if state.moves_used == 0:
+		return str(data.get("help_start", "Choose orbit numbers to transform the center number."))
+	return str(data.get("help_after", "Nice. Keep going until the center reaches the target."))
+
+func tutorial_coach_data(data: Dictionary) -> Dictionary:
+	if not tutorial_mode:
+		return {}
+	var id := str(data.get("id", "tutorial"))
+	if state.moves_used == 0:
+		var start_key := "%s:start" % id
+		if shown_tutorial_coaches.has(start_key):
+			return {}
+		shown_tutorial_coaches[start_key] = true
+		return (data.get("coach", {}) as Dictionary).duplicate(true)
+	var after_moves_raw = data.get("coach_after_moves", {})
+	if typeof(after_moves_raw) != TYPE_DICTIONARY:
+		return {}
+	var after_moves := after_moves_raw as Dictionary
+	var move_key: Variant = state.moves_used
+	if not after_moves.has(move_key):
+		move_key = str(state.moves_used)
+	if not after_moves.has(move_key):
+		return {}
+	var coach_key := "%s:move_%d" % [id, state.moves_used]
+	if shown_tutorial_coaches.has(coach_key):
+		return {}
+	shown_tutorial_coaches[coach_key] = true
+	return (after_moves[move_key] as Dictionary).duplicate(true)

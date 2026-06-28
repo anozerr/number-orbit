@@ -10,7 +10,7 @@ var current_level: int = 1
 var current_number: int = 1
 var target_number: int = 10
 var moves_used: int = 0
-var max_unlocked_level: int = 3
+var max_unlocked_level: int = 1
 var star_ratings: Array = []
 var bulb_rewards_claimed: Array = []
 var tutorial_completed: Array = []
@@ -24,7 +24,7 @@ var sound_volume: int = 80
 
 func setup(level_data: Array, load_saved: bool = true) -> void:
 	levels = level_data
-	max_unlocked_level = min(3, levels.size())
+	max_unlocked_level = min(1, levels.size())
 	current_level = 1
 	current_number = 1
 	target_number = 10
@@ -63,11 +63,10 @@ func current_level_data() -> Dictionary:
 
 func unlock_next_level() -> void:
 	while max_unlocked_level < levels.size():
-		var group_start: int = max_unlocked_level - int(posmod(max_unlocked_level - 1, 3))
-		var group_end: int = min(group_start + 2, levels.size())
-		if not is_level_group_completed(group_start, group_end):
+		var index: int = max_unlocked_level - 1
+		if index < 0 or index >= star_ratings.size() or int(star_ratings[index]) <= 0:
 			return
-		max_unlocked_level = min(levels.size(), group_end + 3)
+		max_unlocked_level = min(levels.size(), max_unlocked_level + 1)
 
 func is_level_group_completed(first_level: int, last_level: int) -> bool:
 	for level_number in range(first_level, last_level + 1):
@@ -180,10 +179,18 @@ func load_save_v1(data: Dictionary) -> void:
 	sound_volume = int(clamp(int(data.get("sound_volume", sound_volume)), 0, 100))
 	load_stars_from_ids(data.get("stars_by_level_id", {}))
 	load_tutorials_from_ids(data.get("tutorial_completed_by_id", {}))
-	max_unlocked_level = int(clamp(int(data.get("max_unlocked_level", max_unlocked_level)), 1, levels.size()))
+	recalculate_max_unlocked_level()
 	var saved_level := level_number_for_id(str(data.get("current_level_id", "")))
 	if saved_level > 0:
 		current_level = saved_level
+
+func recalculate_max_unlocked_level() -> void:
+	max_unlocked_level = min(1, levels.size())
+	while max_unlocked_level < levels.size():
+		var index: int = max_unlocked_level - 1
+		if index < 0 or index >= star_ratings.size() or int(star_ratings[index]) <= 0:
+			return
+		max_unlocked_level = min(levels.size(), max_unlocked_level + 1)
 
 func stars_by_level_id() -> Dictionary:
 	var result := {}

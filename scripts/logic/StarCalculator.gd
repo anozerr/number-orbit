@@ -9,6 +9,8 @@ static func sorted_thresholds(data: Dictionary) -> Array:
 	return thresholds
 
 static func calculate(moves: int, data: Dictionary) -> int:
+	if str(data.get("difficulty", "")) == "Easy":
+		return 3
 	var thresholds: Array = sorted_thresholds(data)
 	if moves <= int(thresholds[0]):
 		return 3
