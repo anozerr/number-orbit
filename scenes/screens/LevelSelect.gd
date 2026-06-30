@@ -3,6 +3,13 @@ extends Control
 
 signal back_pressed
 signal level_selected(level_number: int)
+signal unlock_with_ad_requested(level_number: int)
+
+var locked_popup: Control
+var locked_popup_body: Label
+var locked_popup_ad_button: Button
+var locked_popup_close_button: Button
+var locked_popup_level_number: int = -1
 
 func _ready() -> void:
 	size = Vector2(1080, 1920)
@@ -26,7 +33,7 @@ func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tu
 	var back := Button.new()
 	back.text = ""
 	back.size = Vector2(88, 88)
-	back.position = Vector2(55, 52)
+	back.position = Vector2(70, 70)
 	back.add_theme_font_size_override("font_size", 28)
 	UIStyles.menu_button(back)
 	back.pressed.connect(func(): back_pressed.emit())
@@ -51,6 +58,7 @@ func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tu
 		y = add_difficulty_section(content, difficulty_index, y, star_ratings, max_unlocked_level, tutorials_done)
 		y += 95.0
 	content.custom_minimum_size = Vector2(1080, y - 95.0)
+	build_locked_level_popup()
 
 func add_tutorials_section(parent: Control, y: float, tutorial_completed: Array) -> float:
 	var title := Label.new()
@@ -128,11 +136,14 @@ func add_difficulty_section(parent: Control, difficulty_index: int, y: float, st
 		btn.size = button_size
 		btn.position = Vector2(start_x + (i % 3) * gap_x, start_y + int(float(i) / 3.0) * gap_y)
 		btn.add_theme_font_size_override("font_size", 42)
-		btn.disabled = not unlocked
+		btn.disabled = false
 		style_level_button(btn, completed, unlocked, difficulty_index)
 		UIStyles.add_press_animation(btn)
 		if unlocked:
 			btn.pressed.connect(_on_level_button_pressed.bind(global_level))
+		else:
+			var can_watch_ad := tutorials_done and global_level == max_unlocked_level + 1
+			btn.pressed.connect(show_locked_level_popup.bind(global_level, can_watch_ad))
 		parent.add_child(btn)
 
 		var star_lbl := Label.new()
@@ -166,7 +177,7 @@ func rebuild_levels_for_difficulty(difficulty_index: int, star_ratings: Array, m
 	var back := Button.new()
 	back.text = ""
 	back.size = Vector2(88, 88)
-	back.position = Vector2(55, 52)
+	back.position = Vector2(70, 70)
 	back.add_theme_font_size_override("font_size", 28)
 	UIStyles.menu_button(back)
 	back.pressed.connect(func(): back_pressed.emit())
@@ -190,11 +201,14 @@ func rebuild_levels_for_difficulty(difficulty_index: int, star_ratings: Array, m
 		btn.size = button_size
 		btn.position = Vector2(start_x + (i % 3) * gap_x, start_y + int(float(i) / 3.0) * gap_y)
 		btn.add_theme_font_size_override("font_size", 42)
-		btn.disabled = not unlocked
+		btn.disabled = false
 		style_level_button(btn, completed, unlocked, clamped_index)
 		UIStyles.add_press_animation(btn)
 		if unlocked:
 			btn.pressed.connect(_on_level_button_pressed.bind(global_level))
+		else:
+			var can_watch_ad := global_level == max_unlocked_level + 1
+			btn.pressed.connect(show_locked_level_popup.bind(global_level, can_watch_ad))
 		add_child(btn)
 
 		var star_lbl := Label.new()
@@ -208,37 +222,7 @@ func rebuild_levels_for_difficulty(difficulty_index: int, star_ratings: Array, m
 			add_star_icons(star_lbl, rating)
 		else:
 			UIStyles.icon(UIStyles.ICON_LOCK, star_lbl, Vector2(76, 2), Vector2(32, 32), UIStyles.DISABLED)
-
-func difficulty_moves_text(index: int) -> String:
-	match index:
-		0:
-			return "Easy • 3–4 moves"
-		1:
-			return "Medium • 5–6 moves"
-		2:
-			return "Hard • 7–8 moves"
-	return ""
-
-func completed_levels_in_range(star_ratings: Array, first_level: int, last_level: int) -> int:
-	var count := 0
-	for level_number in range(first_level, last_level + 1):
-		var index: int = level_number - 1
-		if index >= 0 and index < star_ratings.size() and int(star_ratings[index]) > 0:
-			count += 1
-	return count
-
-func style_difficulty_button(button: Button, completed: bool, unlocked: bool) -> void:
-	var bg: Color = Color("#EFFBEA") if completed else Color.WHITE
-	var border: Color = Color("#9EDB8F") if completed else UIStyles.BORDER
-	if not unlocked:
-		bg = Color("#FDFCFA")
-	var normal: StyleBoxFlat = UIStyles.card(bg, border, 30)
-	var hover: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
-	var pressed: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
-	button.add_theme_stylebox_override("normal", normal)
-	button.add_theme_stylebox_override("hover", hover)
-	button.add_theme_stylebox_override("pressed", pressed)
-	button.add_theme_stylebox_override("disabled", normal)
+	build_locked_level_popup()
 
 func difficulty_color(index: int) -> Color:
 	match index:
@@ -249,145 +233,6 @@ func difficulty_color(index: int) -> Color:
 		2:
 			return Color("#E14C4C")
 	return UIStyles.TEXT
-
-func rebuild_tutorial_ops(tutorial_completed: Array) -> void:
-	for child in get_children():
-		child.queue_free()
-
-	var title := Label.new()
-	title.text = "TUTORIALS"
-	title.position = Vector2(0, 95)
-	title.size = Vector2(1080, 120)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(title, UIStyles.FONT_BOLD, 44, UIStyles.TEXT)
-	add_child(title)
-
-	var back := Button.new()
-	back.text = ""
-	back.size = Vector2(88, 88)
-	back.position = Vector2(55, 52)
-	back.add_theme_font_size_override("font_size", 28)
-	UIStyles.menu_button(back)
-	back.pressed.connect(func(): back_pressed.emit())
-	add_child(back)
-	UIStyles.icon(UIStyles.ICON_BACK, back, Vector2(23, 23), Vector2(42, 42), UIStyles.TEXT)
-
-	var ops := ["add", "subtract", "multiply", "divide"]
-	var names := ["Add", "Subtract", "Multiply", "Divide"]
-	var start_y := 285
-	var gap_y := 215
-	var button_size := Vector2(760, 160)
-
-	for i in range(ops.size()):
-		var op: String = str(ops[i])
-		var completed := is_tutorial_op_completed(tutorial_completed, i)
-		var btn := Button.new()
-		btn.text = ""
-		btn.size = button_size
-		btn.position = Vector2((1080 - button_size.x) * 0.5, start_y + i * gap_y)
-		btn.add_theme_font_size_override("font_size", 30)
-		style_tutorial_button(btn, op, completed)
-		UIStyles.add_press_animation(btn)
-		btn.pressed.connect(_on_level_button_pressed.bind(i + 1))
-		add_child(btn)
-
-		var op_icon: Texture2D = UIStyles.ICON_CHECK if completed else UIStyles.operation_icon(op)
-		UIStyles.icon(op_icon, btn, Vector2(72, 51), Vector2(58, 58), Color("#0F6B25") if completed else UIStyles.operation_text(op))
-
-		var name_lbl := Label.new()
-		name_lbl.text = str(names[i])
-		name_lbl.position = Vector2(155, 39)
-		name_lbl.size = Vector2(460, 62)
-		name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		UIStyles.apply_font(name_lbl, UIStyles.FONT_BOLD, 38, Color("#0F6B25") if completed else UIStyles.TEXT)
-		name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		btn.add_child(name_lbl)
-
-		var desc_lbl := Label.new()
-		desc_lbl.text = "Easy • Medium • Hard"
-		desc_lbl.position = Vector2(155, 91)
-		desc_lbl.size = Vector2(520, 42)
-		desc_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		desc_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		UIStyles.apply_font(desc_lbl, UIStyles.FONT_MEDIUM, 22, UIStyles.MUTED)
-		desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		btn.add_child(desc_lbl)
-
-func rebuild_tutorial_difficulty(op_index: int, tutorial_completed: Array) -> void:
-	for child in get_children():
-		child.queue_free()
-
-	var ops := ["add", "subtract", "multiply", "divide"]
-	var op_names := ["Add", "Subtract", "Multiply", "Divide"]
-	var difficulties := ["Easy", "Medium", "Hard"]
-	var op: String = str(ops[int(clamp(op_index, 0, ops.size() - 1))])
-
-	var title := Label.new()
-	title.text = "TUTORIALS: %s" % str(op_names[int(clamp(op_index, 0, op_names.size() - 1))]).to_upper()
-	title.position = Vector2(0, 95)
-	title.size = Vector2(1080, 120)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(title, UIStyles.FONT_BOLD, 44, UIStyles.TEXT)
-	add_child(title)
-
-	var back := Button.new()
-	back.text = ""
-	back.size = Vector2(88, 88)
-	back.position = Vector2(55, 52)
-	back.add_theme_font_size_override("font_size", 28)
-	UIStyles.menu_button(back)
-	back.pressed.connect(func(): back_pressed.emit())
-	add_child(back)
-	UIStyles.icon(UIStyles.ICON_BACK, back, Vector2(23, 23), Vector2(42, 42), UIStyles.TEXT)
-
-	var start_y := 320
-	var gap_y := 250
-	var button_size := Vector2(760, 180)
-	for i in range(difficulties.size()):
-		var tutorial_index: int = op_index * 3 + i
-		var completed := tutorial_index >= 0 and tutorial_index < tutorial_completed.size() and bool(tutorial_completed[tutorial_index])
-		var btn := Button.new()
-		btn.text = ""
-		btn.size = button_size
-		btn.position = Vector2((1080 - button_size.x) * 0.5, start_y + i * gap_y)
-		btn.add_theme_font_size_override("font_size", 34)
-		style_tutorial_difficulty_button(btn, op, completed)
-		UIStyles.add_press_animation(btn)
-		btn.pressed.connect(_on_level_button_pressed.bind(i + 1))
-		add_child(btn)
-
-		var name_lbl := Label.new()
-		name_lbl.text = str(difficulties[i])
-		name_lbl.position = Vector2(0, 36)
-		name_lbl.size = Vector2(button_size.x, 62)
-		name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		UIStyles.apply_font(name_lbl, UIStyles.FONT_BOLD, 38, Color("#0F6B25") if completed else UIStyles.TEXT)
-		name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		btn.add_child(name_lbl)
-
-		var desc_lbl := Label.new()
-		desc_lbl.text = tutorial_description(i)
-		desc_lbl.position = Vector2(0, 94)
-		desc_lbl.size = Vector2(button_size.x, 48)
-		desc_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		desc_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		UIStyles.apply_font(desc_lbl, UIStyles.FONT_MEDIUM, 22, UIStyles.MUTED)
-		desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		btn.add_child(desc_lbl)
-
-func tutorial_description(index: int) -> String:
-	match index:
-		0:
-			return "2 right moves from 3 numbers"
-		1:
-			return "4 right moves from 5 numbers"
-		2:
-			return "6 right moves from 7 numbers"
-	return ""
 
 func style_level_button(button: Button, completed: bool, unlocked: bool, difficulty_index: int = 0) -> void:
 	var normal: StyleBoxFlat = UIStyles.card(Color("#EFFBEA") if completed else Color("#FDFCFA"), Color("#9EDB8F") if completed else UIStyles.BORDER, 24)
@@ -433,29 +278,6 @@ func style_tutorial_button(button: Button, op: String, completed: bool = false, 
 	button.add_theme_color_override("font_pressed_color", color)
 	button.add_theme_color_override("font_disabled_color", color)
 
-func style_tutorial_difficulty_button(button: Button, op: String, completed: bool) -> void:
-	var bg: Color = Color("#EFFBEA") if completed else Color.WHITE
-	var border: Color = Color("#9EDB8F") if completed else UIStyles.operation_border(op).lightened(0.25)
-	var normal: StyleBoxFlat = UIStyles.card(bg, border, 30)
-	normal.border_width_left = 2
-	normal.border_width_right = 2
-	normal.border_width_top = 2
-	normal.border_width_bottom = 2
-	var hover: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
-	var pressed: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
-	button.add_theme_stylebox_override("normal", normal)
-	button.add_theme_stylebox_override("hover", hover)
-	button.add_theme_stylebox_override("pressed", pressed)
-
-func is_tutorial_op_completed(tutorial_completed: Array, op_index: int) -> bool:
-	var start_index: int = op_index * 3
-	if start_index < 0 or start_index + 2 >= tutorial_completed.size():
-		return false
-	for i in range(3):
-		if not bool(tutorial_completed[start_index + i]):
-			return false
-	return true
-
 func are_all_tutorials_completed(tutorial_completed: Array) -> bool:
 	if tutorial_completed.is_empty():
 		return false
@@ -466,6 +288,84 @@ func are_all_tutorials_completed(tutorial_completed: Array) -> bool:
 
 func _on_level_button_pressed(level_number: int) -> void:
 	level_selected.emit(level_number)
+
+func build_locked_level_popup() -> void:
+	if is_instance_valid(locked_popup):
+		locked_popup.queue_free()
+
+	locked_popup = Control.new()
+	locked_popup.z_index = 100
+	locked_popup.size = Vector2(1080, 1920)
+	locked_popup.visible = false
+	add_child(locked_popup)
+
+	var overlay := ColorRect.new()
+	overlay.size = Vector2(1080, 1920)
+	overlay.color = Color(0.05, 0.06, 0.10, 0.45)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	locked_popup.add_child(overlay)
+
+	var panel := Panel.new()
+	panel.position = Vector2(110, 610)
+	panel.size = Vector2(860, 660)
+	panel.add_theme_stylebox_override("panel", UIStyles.soft_panel(Color.WHITE, 36))
+	locked_popup.add_child(panel)
+
+	var icon_bg := Panel.new()
+	icon_bg.position = Vector2(365, -50)
+	icon_bg.size = Vector2(130, 130)
+	icon_bg.add_theme_stylebox_override("panel", UIStyles.card(UIStyles.PURPLE, Color.WHITE, 65))
+	panel.add_child(icon_bg)
+	UIStyles.icon(UIStyles.ICON_INFO, icon_bg, Vector2(38, 38), Vector2(54, 54), Color.WHITE)
+
+	var title := Label.new()
+	title.text = "LOCKED LEVEL"
+	title.position = Vector2(0, 105)
+	title.size = Vector2(860, 60)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(title, UIStyles.FONT_BOLD, 36, UIStyles.TEXT)
+	panel.add_child(title)
+
+	locked_popup_body = Label.new()
+	locked_popup_body.position = Vector2(95, 190)
+	locked_popup_body.size = Vector2(670, 130)
+	locked_popup_body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	locked_popup_body.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	locked_popup_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	UIStyles.apply_font(locked_popup_body, UIStyles.FONT_MEDIUM, 24, UIStyles.MUTED)
+	panel.add_child(locked_popup_body)
+
+	locked_popup_ad_button = Button.new()
+	locked_popup_ad_button.text = "Watch Ad"
+	locked_popup_ad_button.position = Vector2(145, 405)
+	locked_popup_ad_button.size = Vector2(570, 78)
+	locked_popup_ad_button.add_theme_font_size_override("font_size", 27)
+	UIStyles.primary_button(locked_popup_ad_button)
+	locked_popup_ad_button.pressed.connect(func(): unlock_with_ad_requested.emit(locked_popup_level_number))
+	panel.add_child(locked_popup_ad_button)
+
+	locked_popup_close_button = Button.new()
+	locked_popup_close_button.text = "Cancel"
+	locked_popup_close_button.position = Vector2(145, 515)
+	locked_popup_close_button.size = Vector2(570, 76)
+	locked_popup_close_button.add_theme_font_size_override("font_size", 27)
+	UIStyles.menu_button(locked_popup_close_button)
+	locked_popup_close_button.pressed.connect(hide_locked_level_popup)
+	panel.add_child(locked_popup_close_button)
+
+func show_locked_level_popup(level_number: int, can_watch_ad: bool) -> void:
+	if not is_instance_valid(locked_popup):
+		build_locked_level_popup()
+	locked_popup_level_number = level_number
+	locked_popup_body.text = "This level is locked. Complete the previous level%s to open it." % (" or watch an ad" if can_watch_ad else "")
+	locked_popup_ad_button.visible = can_watch_ad
+	locked_popup_close_button.position.y = 515
+	locked_popup.visible = true
+
+func hide_locked_level_popup() -> void:
+	if is_instance_valid(locked_popup):
+		locked_popup.visible = false
 
 func add_star_icons(parent: Control, count: int) -> void:
 	var icon_size := Vector2(24, 24)

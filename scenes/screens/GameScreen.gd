@@ -8,9 +8,22 @@ signal settings_pressed
 signal restart_pressed
 signal orbit_pressed(value: int, op: String, item_id: String)
 signal hint_requested
+signal hint_ad_requested
 
 const SCREEN_CENTER := Vector2(540, 960)
 const ORBIT_RADIUS := 390
+const EDGE_MARGIN := 70.0
+const TOP_BUTTON_Y := 70.0
+const TOP_STATUS_Y := 202.0
+const TOP_STATUS_SIZE := Vector2(940, 118)
+const TARGET_BUBBLE_SIZE := Vector2(150, 150)
+const INFO_LINE_Y := 364.0
+const INFO_LINE_SIZE := Vector2(940, 82)
+const ACTION_BUTTON_Y := 1518.0
+const ACTION_BUTTON_HEIGHT := 82.0
+const LEGEND_Y := 1626.0
+const CENTER_CIRCLE_DIAMETER := 352
+const CENTER_CIRCLE_RADIUS := CENTER_CIRCLE_DIAMETER * 0.5
 
 class CoachDimMask:
 	extends ColorRect
@@ -87,15 +100,15 @@ void fragment() {
 
 var center_label: Label
 var level_label: Label
-var task_label: Label
 var goal_panel: Panel
+var target_panel: Panel
 var goal_label: Label
 var goal_divider: ColorRect
+var info_panel: Panel
+var info_icon: TextureRect
 var tutorial_help_label: Label
 var moves_panel: Panel
 var moves_count_label: Label
-var moves_stars_label: Label
-var status_label: Label
 var bulbs_button: Button
 var hint_popup: Control
 var hint_body_label: Label
@@ -103,11 +116,15 @@ var hint_balance_label: Label
 var hint_buy_button: Button
 var hint_ad_button: Button
 var hint_cancel_button: Button
+var hint_move_circle: Panel
+var hint_move_label: Label
 var restart_button: Button
 var restart_icon: TextureRect
+var restart_button_label: Label
 var operation_legend: OperationLegend
 var orbit: Node2D
 var center_circle_texture: Texture2D
+var center_shadow_style: StyleBoxFlat
 var orbit_angle := 0.0
 var last_center_number: int = -999999
 var level_failed: bool = false
@@ -147,7 +164,8 @@ func _unhandled_input(event: InputEvent) -> void:
 func build() -> void:
 	for child in get_children():
 		child.queue_free()
-	center_circle_texture = UIStyles.circle_gradient_texture(352, UIStyles.PURPLE.lightened(0.14), UIStyles.PURPLE_DARK)
+	center_circle_texture = UIStyles.circle_gradient_texture(CENTER_CIRCLE_DIAMETER, UIStyles.PURPLE.lightened(0.14), UIStyles.PURPLE_DARK)
+	center_shadow_style = make_center_shadow_style()
 
 	center_label = Label.new()
 	center_label.position = SCREEN_CENTER - Vector2(220, 80)
@@ -157,57 +175,80 @@ func build() -> void:
 	UIStyles.apply_font(center_label, UIStyles.FONT_BOLD, 110, Color.WHITE)
 	add_child(center_label)
 
+	goal_panel = Panel.new()
+	goal_panel.position = Vector2(EDGE_MARGIN, TOP_STATUS_Y)
+	goal_panel.size = TOP_STATUS_SIZE
+	goal_panel.add_theme_stylebox_override("panel", UIStyles.soft_panel(Color.WHITE, 34))
+	add_child(goal_panel)
+
 	level_label = Label.new()
-	level_label.position = Vector2(0, 80)
-	level_label.size = Vector2(1080, 50)
+	level_label.position = Vector2(0, 0)
+	level_label.size = Vector2(360, TOP_STATUS_SIZE.y)
 	level_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	level_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(level_label, UIStyles.FONT_BOLD, 30, UIStyles.TEXT)
-	add_child(level_label)
-
-	task_label = Label.new()
-	task_label.position = Vector2(0, 120)
-	task_label.size = Vector2(1080, 90)
-	task_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	task_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(task_label, UIStyles.FONT_SEMIBOLD, 54, UIStyles.TEXT)
-	add_child(task_label)
-
-	goal_panel = Panel.new()
-	goal_panel.position = Vector2(140, 152)
-	goal_panel.size = Vector2(800, 88)
-	goal_panel.add_theme_stylebox_override("panel", UIStyles.card(Color("#FFF4CF"), Color("#F0C057"), 28))
-	add_child(goal_panel)
-	goal_panel.gui_input.connect(_on_goal_panel_input)
-
-	goal_label = Label.new()
-	goal_label.position = Vector2(0, 0)
-	goal_label.size = Vector2(400, 88)
-	goal_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	goal_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(goal_label, UIStyles.FONT_BOLD, 38, Color("#8D6100"))
-	goal_panel.add_child(goal_label)
+	level_label.mouse_filter = Control.MOUSE_FILTER_STOP
+	UIStyles.apply_font(level_label, UIStyles.FONT_BOLD, 28, UIStyles.TEXT)
+	goal_panel.add_child(level_label)
+	level_label.gui_input.connect(_on_level_panel_input)
 
 	goal_divider = ColorRect.new()
-	goal_divider.position = Vector2(399, 18)
-	goal_divider.size = Vector2(2, 52)
-	goal_divider.color = Color("#EED37B")
+	goal_divider.visible = false
 	goal_divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	goal_panel.add_child(goal_divider)
 
+	moves_panel = Panel.new()
+	moves_panel.position = Vector2(TOP_STATUS_SIZE.x - 360.0, 0)
+	moves_panel.size = Vector2(360, TOP_STATUS_SIZE.y)
+	moves_panel.add_theme_stylebox_override("panel", empty_panel_style())
+	goal_panel.add_child(moves_panel)
+	moves_panel.gui_input.connect(_on_moves_panel_input)
+
+	moves_count_label = Label.new()
+	moves_count_label.position = Vector2(0, 0)
+	moves_count_label.size = moves_panel.size
+	moves_count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	moves_count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(moves_count_label, UIStyles.FONT_BOLD, 28, UIStyles.TEXT)
+	moves_panel.add_child(moves_count_label)
+
+	target_panel = Panel.new()
+	target_panel.position = Vector2(540, TOP_STATUS_Y + TOP_STATUS_SIZE.y * 0.5) - TARGET_BUBBLE_SIZE * 0.5
+	target_panel.size = TARGET_BUBBLE_SIZE
+	target_panel.z_index = 6
+	target_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	target_panel.add_theme_stylebox_override("panel", UIStyles.card(Color("#FFF4CF"), Color("#F0C057"), 75))
+	add_child(target_panel)
+	target_panel.gui_input.connect(_on_goal_panel_input)
+
+	goal_label = Label.new()
+	goal_label.position = Vector2.ZERO
+	goal_label.size = TARGET_BUBBLE_SIZE
+	goal_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	goal_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	goal_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	UIStyles.apply_font(goal_label, UIStyles.FONT_BOLD, 46, Color("#B17600"))
+	target_panel.add_child(goal_label)
+
+	info_panel = Panel.new()
+	info_panel.position = Vector2(EDGE_MARGIN, INFO_LINE_Y)
+	info_panel.size = INFO_LINE_SIZE
+	info_panel.add_theme_stylebox_override("panel", UIStyles.soft_panel(Color.WHITE, 28))
+	add_child(info_panel)
+	info_icon = UIStyles.icon(UIStyles.ICON_INFO, info_panel, Vector2(34, 20), Vector2(42, 42), UIStyles.PURPLE)
+
 	tutorial_help_label = Label.new()
-	tutorial_help_label.position = Vector2(95, 262)
-	tutorial_help_label.size = Vector2(890, 72)
+	tutorial_help_label.position = Vector2(104, 0)
+	tutorial_help_label.size = Vector2(INFO_LINE_SIZE.x - 138.0, INFO_LINE_SIZE.y)
 	tutorial_help_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tutorial_help_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	tutorial_help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tutorial_help_label.clip_text = true
 	UIStyles.apply_font(tutorial_help_label, UIStyles.FONT_MEDIUM, 24, UIStyles.MUTED)
-	UIStyles.pill(tutorial_help_label)
-	add_child(tutorial_help_label)
+	info_panel.add_child(tutorial_help_label)
 
 	var back := Button.new()
 	back.text = ""
-	back.position = Vector2(55, 52)
+	back.position = Vector2(EDGE_MARGIN, TOP_BUTTON_Y)
 	back.size = Vector2(88, 88)
 	back.add_theme_font_size_override("font_size", 36)
 	UIStyles.menu_button(back)
@@ -217,7 +258,7 @@ func build() -> void:
 
 	var settings := Button.new()
 	settings.text = ""
-	settings.position = Vector2(937, 52)
+	settings.position = Vector2(1080.0 - EDGE_MARGIN - 88.0, TOP_BUTTON_Y)
 	settings.size = Vector2(88, 88)
 	settings.add_theme_font_size_override("font_size", 30)
 	UIStyles.menu_button(settings)
@@ -225,58 +266,32 @@ func build() -> void:
 	add_child(settings)
 	UIStyles.icon(UIStyles.ICON_GEAR, settings, Vector2(23, 23), Vector2(42, 42), UIStyles.TEXT)
 
-	moves_panel = Panel.new()
-	moves_panel.position = Vector2(400, 0)
-	moves_panel.size = Vector2(400, 88)
-	moves_panel.add_theme_stylebox_override("panel", empty_panel_style())
-	goal_panel.add_child(moves_panel)
-	moves_panel.gui_input.connect(_on_moves_panel_input)
-
-	moves_count_label = Label.new()
-	moves_count_label.position = Vector2(0, 9)
-	moves_count_label.size = Vector2(400, 34)
-	moves_count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	moves_count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(moves_count_label, UIStyles.FONT_SEMIBOLD, 24, UIStyles.TEXT)
-	moves_panel.add_child(moves_count_label)
-
-	moves_stars_label = Label.new()
-	moves_stars_label.position = Vector2(0, 43)
-	moves_stars_label.size = Vector2(400, 36)
-	moves_stars_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	moves_stars_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(moves_stars_label, UIStyles.FONT_BOLD, 28, UIStyles.GOLD)
-	moves_panel.add_child(moves_stars_label)
-
-	status_label = Label.new()
-	status_label.position = Vector2(70, 1448)
-	status_label.size = Vector2(940, 52)
-	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	status_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(status_label, UIStyles.FONT_SEMIBOLD, 24, Color("#C82424"))
-	status_label.add_theme_stylebox_override("normal", UIStyles.card(Color("#FFF1F1"), Color("#F5B5B5"), 22))
-	status_label.visible = false
-	add_child(status_label)
-
 	restart_button = Button.new()
-	restart_button.text = "     Restart"
-	restart_button.position = Vector2(555, 1534)
-	restart_button.size = Vector2(455, 68)
+	restart_button.text = ""
+	restart_button.position = Vector2(555, ACTION_BUTTON_Y)
+	restart_button.size = Vector2(455, ACTION_BUTTON_HEIGHT)
 	restart_button.add_theme_font_size_override("font_size", 28)
 	UIStyles.menu_button(restart_button)
 	restart_button.pressed.connect(func(): restart_pressed.emit())
 	add_child(restart_button)
-	restart_icon = UIStyles.icon(UIStyles.ICON_RESTART, restart_button, Vector2(126, 19), Vector2(30, 30), UIStyles.TEXT)
+	restart_icon = UIStyles.icon(UIStyles.ICON_RESTART, restart_button, Vector2.ZERO, Vector2(30, 30), UIStyles.TEXT)
+	restart_button_label = Label.new()
+	restart_button_label.text = "Restart"
+	restart_button_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	restart_button_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	restart_button_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(restart_button_label, UIStyles.FONT_BOLD, 28, UIStyles.TEXT)
+	restart_button.add_child(restart_button_label)
 
 	bulbs_button = Button.new()
 	bulbs_button.text = ""
-	bulbs_button.position = Vector2(70, 1534)
-	bulbs_button.size = Vector2(455, 68)
+	bulbs_button.position = Vector2(70, ACTION_BUTTON_Y)
+	bulbs_button.size = Vector2(455, ACTION_BUTTON_HEIGHT)
 	bulbs_button.add_theme_font_size_override("font_size", 24)
 	UIStyles.menu_button(bulbs_button)
 	bulbs_button.pressed.connect(show_hint_popup)
 	add_child(bulbs_button)
-	bulbs_button_icon = UIStyles.icon(UIStyles.ICON_BULB, bulbs_button, Vector2(0, 17), Vector2(34, 34), UIStyles.GOLD)
+	bulbs_button_icon = UIStyles.icon(UIStyles.ICON_BULB, bulbs_button, Vector2(126, 24), Vector2(34, 34), UIStyles.GOLD)
 	bulbs_button_label = Label.new()
 	bulbs_button_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bulbs_button_label.position = Vector2.ZERO
@@ -287,7 +302,7 @@ func build() -> void:
 	bulbs_button.add_child(bulbs_button_label)
 
 	operation_legend = OperationLegendScene.instantiate()
-	operation_legend.position = Vector2(55, 1638)
+	operation_legend.position = Vector2(55, LEGEND_Y)
 	add_child(operation_legend)
 
 	orbit = Node2D.new()
@@ -308,10 +323,9 @@ func configure(title_text: String, current_number: int, target_number: int, move
 		cached_popup_hint_text = ""
 		cached_popup_move_index = -1
 	level_label.text = title_text
-	task_label.text = "%d  →  %d" % [current_number, target_number]
-	task_label.visible = false
-	goal_label.text = "TARGET  %d" % target_number
+	goal_label.text = str(target_number)
 	tutorial_help_text_current = fail_comment_text() if failed else (tutorial_help if tutorial else progress_comment_text(moves))
+	info_panel.visible = true
 	tutorial_help_label.visible = true
 	tutorial_help_label.modulate.a = 1.0
 	if info_text_tween != null and info_text_tween.is_valid():
@@ -323,29 +337,24 @@ func configure(title_text: String, current_number: int, target_number: int, move
 	if last_center_number != current_number:
 		pop_center_number()
 		last_center_number = current_number
-	moves_count_label.text = "Moves: %d" % moves
-	moves_stars_label.text = current_stars_string(moves, thresholds)
-	moves_panel.visible = not tutorial
-	goal_divider.visible = not tutorial
-	goal_label.size = Vector2(800 if tutorial else 400, 88)
-	status_label.text = "No valid moves left — tap Restart." if level_failed else ""
-	status_label.visible = false
+	moves_count_label.text = "MOVES %d" % moves
+	moves_panel.visible = true
+	goal_divider.visible = false
+	goal_label.size = TARGET_BUBBLE_SIZE
 	operation_legend.configure_ops(allowed_ops)
 	operation_legend.visible = true
 	bulbs_button.visible = not tutorial
 	update_hint_button_label(hint_points)
 	if tutorial:
-		restart_button.position = Vector2(70, 1534)
-		restart_button.size = Vector2(940, 68)
-		restart_button.text = "     Restart"
-		if restart_icon != null:
-			restart_icon.position = Vector2(362, 19)
+		restart_button.position = Vector2(70, ACTION_BUTTON_Y)
+		restart_button.size = Vector2(940, ACTION_BUTTON_HEIGHT)
+		restart_button.pivot_offset = restart_button.size * 0.5
 	else:
-		restart_button.position = Vector2(555, 1534)
-		restart_button.size = Vector2(455, 68)
-		restart_button.text = "     Restart"
-		if restart_icon != null:
-			restart_icon.position = Vector2(126, 19)
+		restart_button.position = Vector2(555, ACTION_BUTTON_Y)
+		restart_button.size = Vector2(455, ACTION_BUTTON_HEIGHT)
+		restart_button.pivot_offset = restart_button.size * 0.5
+	update_restart_button_layout()
+	bulbs_button.pivot_offset = bulbs_button.size * 0.5
 	if level_failed and not previous_failed_state:
 		pulse_failure_controls()
 	previous_failed_state = level_failed
@@ -371,25 +380,29 @@ func pulse_failure_controls() -> void:
 	tween.tween_property(restart_button, "scale", Vector2(1.04, 1.04), 0.13).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.tween_property(restart_button, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
-func current_stars_string(moves: int, thresholds: Array) -> String:
-	if moves <= int(thresholds[0]):
-		return "★★★"
-	if moves <= int(thresholds[1]):
-		return "★★"
-	return "★"
-
 func _on_moves_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
 	if mouse_event != null and mouse_event.pressed:
-		pop_moves_panel()
-		show_temporary_help(star_requirements_text(), false)
+		pop_status_panel()
+		if current_is_tutorial:
+			show_temporary_help("Tutorial moves are only for learning. No stars are awarded here.", false)
+		else:
+			show_temporary_help(star_requirements_text(), false)
+
+func _on_level_panel_input(event: InputEvent) -> void:
+	var mouse_event := event as InputEventMouseButton
+	if mouse_event != null and mouse_event.pressed:
+		pop_status_panel()
+		if current_is_tutorial:
+			show_temporary_help("Tutorials teach the core idea one small step at a time.", false)
+		else:
+			show_temporary_help("This is your current level. Beat it to unlock the next challenge.", false)
 
 func _on_goal_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
 	if mouse_event != null and mouse_event.pressed:
 		pop_goal_panel()
-		if current_is_tutorial or (event as InputEventMouseButton).position.x <= 400.0:
-			show_temporary_help("Reach %d exactly by tapping orbit numbers in the right order." % current_target_value, false)
+		show_temporary_help("Reach %d exactly by tapping orbit numbers in the right order." % current_target_value, false)
 
 func star_requirements_text() -> String:
 	if current_thresholds.size() < 3:
@@ -418,11 +431,15 @@ func apply_info_line_style(error: bool = false) -> void:
 	if info_line_error_state != null and bool(info_line_error_state) == error:
 		return
 	if error:
-		tutorial_help_label.add_theme_stylebox_override("normal", UIStyles.card(Color("#FFF1F1"), Color("#F5B5B5"), 24))
+		info_panel.add_theme_stylebox_override("panel", UIStyles.card(Color("#FFF1F1"), Color("#F5B5B5"), 28))
 		UIStyles.apply_font(tutorial_help_label, UIStyles.FONT_SEMIBOLD, 24, Color("#C82424"))
+		if info_icon != null:
+			info_icon.modulate = Color("#C82424")
 	else:
-		UIStyles.pill(tutorial_help_label)
+		info_panel.add_theme_stylebox_override("panel", UIStyles.soft_panel(Color.WHITE, 28))
 		UIStyles.apply_font(tutorial_help_label, UIStyles.FONT_MEDIUM, 24, UIStyles.MUTED)
+		if info_icon != null:
+			info_icon.modulate = UIStyles.PURPLE
 	info_line_error_state = error
 
 func update_hint_button_label(hint_points: int) -> void:
@@ -432,9 +449,22 @@ func update_hint_button_label(hint_points: int) -> void:
 	var label_width: float = bulbs_button_label.get_theme_font("font").get_string_size(bulbs_button_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, bulbs_button_label.get_theme_font_size("font_size")).x
 	var group_width := 34.0 + 12.0 + label_width
 	if bulbs_button_icon != null:
-		bulbs_button_icon.position = Vector2((bulbs_button.size.x - group_width) * 0.5, 17)
+		bulbs_button_icon.position = Vector2((bulbs_button.size.x - group_width) * 0.5, (bulbs_button.size.y - 34.0) * 0.5)
 	bulbs_button_label.position = Vector2((bulbs_button.size.x - group_width) * 0.5 + 46.0, 0)
 	bulbs_button_label.size = Vector2(label_width + 8.0, bulbs_button.size.y)
+
+func update_restart_button_layout() -> void:
+	if restart_button_label == null or restart_icon == null:
+		return
+	restart_button_label.text = "Restart"
+	var label_width: float = restart_button_label.get_theme_font("font").get_string_size(restart_button_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, restart_button_label.get_theme_font_size("font_size")).x
+	var icon_size := 30.0
+	var gap := 14.0
+	var group_width := icon_size + gap + label_width
+	var start_x := (restart_button.size.x - group_width) * 0.5
+	restart_icon.position = Vector2(start_x, (restart_button.size.y - icon_size) * 0.5)
+	restart_button_label.position = Vector2(start_x + icon_size + gap, 0)
+	restart_button_label.size = Vector2(label_width + 8.0, restart_button.size.y)
 
 func pop_moves_panel() -> void:
 	if moves_panel == null:
@@ -447,6 +477,7 @@ func pop_moves_panel() -> void:
 func show_temporary_help(text: String, error: bool = false) -> void:
 	temporary_help_version += 1
 	var version := temporary_help_version
+	info_panel.visible = true
 	tutorial_help_label.visible = true
 	if info_text_tween != null and info_text_tween.is_valid():
 		info_text_tween.kill()
@@ -481,11 +512,19 @@ func set_info_text_alpha(alpha: float, error: bool = false) -> void:
 	tutorial_help_label.add_theme_color_override("font_color", color)
 
 func pop_goal_panel() -> void:
+	if target_panel == null:
+		return
+	target_panel.pivot_offset = target_panel.size * 0.5
+	var tween := target_panel.create_tween()
+	tween.tween_property(target_panel, "scale", Vector2(1.045, 1.045), 0.10).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(target_panel, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+func pop_status_panel() -> void:
 	if goal_panel == null:
 		return
 	goal_panel.pivot_offset = goal_panel.size * 0.5
 	var tween := goal_panel.create_tween()
-	tween.tween_property(goal_panel, "scale", Vector2(1.035, 1.035), 0.10).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(goal_panel, "scale", Vector2(1.018, 1.018), 0.10).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.tween_property(goal_panel, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 func empty_panel_style() -> StyleBoxFlat:
@@ -517,6 +556,9 @@ func set_orbit_items(items: Array) -> void:
 			UIStyles.add_press_animation(btn)
 			orbit.add_child(btn)
 			is_new = true
+		btn.modulate.a = 1.0
+		btn.scale = Vector2.ONE
+		btn.set_meta("popping", false)
 		btn.visible = true
 		btn.text = str(value)
 		btn.set_meta("id", item_id)
@@ -541,9 +583,29 @@ func set_orbit_items(items: Array) -> void:
 	for child in orbit.get_children():
 		var btn := child as Button
 		if btn != null and not desired_ids.has(str(btn.get_meta("id"))):
-			btn.visible = false
-			btn.disabled = true
+			animate_orbit_disappear(btn)
 	update_orbit_positions(false)
+
+func animate_orbit_disappear(button: Button) -> void:
+	if button == null or button.is_queued_for_deletion():
+		return
+	if bool(button.get_meta("popping", false)):
+		return
+	button.set_meta("popping", true)
+	button.disabled = true
+	button.pivot_offset = button.size * 0.5
+	var tween := button.create_tween()
+	tween.tween_property(button, "scale", Vector2(1.16, 1.16), 0.07).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(button, "scale", Vector2(0.72, 0.72), 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	tween.parallel().tween_property(button, "modulate:a", 0.0, 0.14).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.finished.connect(func() -> void:
+		if button == null or button.is_queued_for_deletion():
+			return
+		button.visible = false
+		button.modulate.a = 1.0
+		button.scale = Vector2.ONE
+		button.set_meta("popping", false)
+	)
 
 func find_orbit_button(item_id: String) -> Button:
 	for child in orbit.get_children():
@@ -602,9 +664,27 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	if not visible:
 		return
+	if center_shadow_style != null:
+		draw_style_box(center_shadow_style, Rect2(SCREEN_CENTER - Vector2(CENTER_CIRCLE_RADIUS, CENTER_CIRCLE_RADIUS), Vector2(CENTER_CIRCLE_DIAMETER, CENTER_CIRCLE_DIAMETER)))
 	if center_circle_texture != null:
-		draw_texture_rect(center_circle_texture, Rect2(SCREEN_CENTER - Vector2(176, 176), Vector2(352, 352)), false)
+		draw_texture_rect(center_circle_texture, Rect2(SCREEN_CENTER - Vector2(CENTER_CIRCLE_RADIUS, CENTER_CIRCLE_RADIUS), Vector2(CENTER_CIRCLE_DIAMETER, CENTER_CIRCLE_DIAMETER)), false)
 	draw_arc(SCREEN_CENTER, ORBIT_RADIUS, 0.0, TAU, 180, Color("#E4DED6"), 4.0)
+
+func make_center_shadow_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0, 0, 0, 0)
+	style.border_width_left = 0
+	style.border_width_right = 0
+	style.border_width_top = 0
+	style.border_width_bottom = 0
+	style.corner_radius_top_left = int(CENTER_CIRCLE_RADIUS)
+	style.corner_radius_top_right = int(CENTER_CIRCLE_RADIUS)
+	style.corner_radius_bottom_left = int(CENTER_CIRCLE_RADIUS)
+	style.corner_radius_bottom_right = int(CENTER_CIRCLE_RADIUS)
+	style.shadow_color = Color(0.12, 0.12, 0.22, 0.075)
+	style.shadow_size = 20
+	style.shadow_offset = Vector2(0, 10)
+	return style
 
 func update_orbit_positions(snap: bool = false) -> void:
 	for i in range(orbit.get_child_count()):
@@ -655,6 +735,7 @@ func clear_orbit_buttons() -> void:
 
 func build_hint_popup() -> void:
 	hint_popup = Control.new()
+	hint_popup.z_index = 100
 	hint_popup.size = Vector2(1080, 1920)
 	hint_popup.visible = false
 	add_child(hint_popup)
@@ -666,8 +747,8 @@ func build_hint_popup() -> void:
 	hint_popup.add_child(overlay)
 
 	var panel := Panel.new()
-	panel.position = Vector2(110, 625)
-	panel.size = Vector2(860, 570)
+	panel.position = Vector2(110, 610)
+	panel.size = Vector2(860, 660)
 	panel.add_theme_stylebox_override("panel", UIStyles.soft_panel(Color.WHITE, 36))
 	hint_popup.add_child(panel)
 
@@ -697,8 +778,21 @@ func build_hint_popup() -> void:
 	UIStyles.apply_font(hint_body_label, UIStyles.FONT_MEDIUM, 25, UIStyles.MUTED)
 	panel.add_child(hint_body_label)
 
+	hint_move_circle = Panel.new()
+	hint_move_circle.position = Vector2(365, 230)
+	hint_move_circle.size = Vector2(130, 130)
+	hint_move_circle.visible = false
+	panel.add_child(hint_move_circle)
+	hint_move_label = Label.new()
+	hint_move_label.position = Vector2.ZERO
+	hint_move_label.size = hint_move_circle.size
+	hint_move_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint_move_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(hint_move_label, UIStyles.FONT_BOLD, 50, UIStyles.TEXT)
+	hint_move_circle.add_child(hint_move_label)
+
 	hint_balance_label = Label.new()
-	hint_balance_label.position = Vector2(0, 300)
+	hint_balance_label.position = Vector2(0, 322)
 	hint_balance_label.size = Vector2(860, 42)
 	hint_balance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint_balance_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -707,8 +801,8 @@ func build_hint_popup() -> void:
 
 	hint_buy_button = Button.new()
 	hint_buy_button.text = "Use Hint"
-	hint_buy_button.position = Vector2(195, 360)
-	hint_buy_button.size = Vector2(470, 78)
+	hint_buy_button.position = Vector2(145, 405)
+	hint_buy_button.size = Vector2(570, 78)
 	hint_buy_button.add_theme_font_size_override("font_size", 27)
 	UIStyles.primary_button(hint_buy_button)
 	hint_buy_button.pressed.connect(func(): hint_requested.emit())
@@ -716,31 +810,34 @@ func build_hint_popup() -> void:
 
 	hint_ad_button = Button.new()
 	hint_ad_button.text = "Watch Ad"
-	hint_ad_button.position = Vector2(195, 360)
-	hint_ad_button.size = Vector2(470, 78)
+	hint_ad_button.position = Vector2(145, 405)
+	hint_ad_button.size = Vector2(570, 78)
 	hint_ad_button.add_theme_font_size_override("font_size", 27)
 	UIStyles.primary_button(hint_ad_button)
+	hint_ad_button.pressed.connect(func(): hint_ad_requested.emit())
 	hint_ad_button.visible = false
 	panel.add_child(hint_ad_button)
 
 	hint_cancel_button = Button.new()
 	hint_cancel_button.text = "Cancel"
-	hint_cancel_button.position = Vector2(195, 465)
-	hint_cancel_button.size = Vector2(470, 76)
+	hint_cancel_button.position = Vector2(145, 515)
+	hint_cancel_button.size = Vector2(570, 76)
 	hint_cancel_button.add_theme_font_size_override("font_size", 27)
 	UIStyles.menu_button(hint_cancel_button)
 	hint_cancel_button.pressed.connect(func(): hint_popup.visible = false)
 	panel.add_child(hint_cancel_button)
 
 func show_hint_popup() -> void:
+	reset_hint_popup_layout()
 	if cached_popup_move_index == current_moves and not cached_popup_hint_text.is_empty():
-		hint_body_label.text = cached_popup_hint_text
+		apply_hint_result_text(cached_popup_hint_text)
 		hint_balance_label.text = "Balance: %d bulbs" % current_hint_points
 		hint_buy_button.visible = false
 		hint_ad_button.visible = false
 		hint_cancel_button.text = "Back"
 	else:
 		hint_body_label.text = "Spend 80 bulbs to reveal the next winning move."
+		hide_hint_move_circle()
 		hint_balance_label.text = "Balance: %d bulbs" % current_hint_points
 		hint_buy_button.visible = true
 		hint_ad_button.visible = false
@@ -751,7 +848,8 @@ func show_hint_result(message: String, balance: int) -> void:
 	current_hint_points = balance
 	cached_popup_hint_text = message
 	cached_popup_move_index = current_moves
-	hint_body_label.text = message
+	reset_hint_popup_layout()
+	apply_hint_result_text(message)
 	hint_balance_label.text = "Balance: %d bulbs" % current_hint_points
 	hint_buy_button.visible = false
 	hint_ad_button.visible = false
@@ -762,12 +860,84 @@ func show_insufficient_hint_balance(balance: int) -> void:
 	current_hint_points = balance
 	cached_popup_hint_text = ""
 	cached_popup_move_index = -1
+	reset_hint_popup_layout()
 	hint_body_label.text = "Not enough bulbs for a hint."
+	hide_hint_move_circle()
 	hint_balance_label.text = "Balance: %d / %d bulbs" % [current_hint_points, GameState.HINT_COST]
 	hint_buy_button.visible = false
 	hint_ad_button.visible = true
 	hint_cancel_button.text = "Cancel"
 	hint_popup.visible = true
+
+func reset_hint_popup_layout() -> void:
+	hint_body_label.position = Vector2(95, 178)
+	hint_body_label.size = Vector2(670, 120)
+	hint_balance_label.position = Vector2(0, 322)
+	hide_hint_move_circle()
+
+func apply_hint_result_text(message: String) -> void:
+	var parsed := parse_hint_move(message)
+	if parsed.is_empty():
+		hint_body_label.text = message
+		hide_hint_move_circle()
+		return
+	var moves_left := extract_hint_moves_left(message)
+	hint_body_label.text = "%s\nTap this orbit number next." % moves_left if not moves_left.is_empty() else "Tap this orbit number next."
+	hint_body_label.position = Vector2(95, 165)
+	hint_body_label.size = Vector2(670, 92)
+	hint_balance_label.position = Vector2(0, 420)
+	show_hint_move_circle(str(parsed["op"]), int(parsed["value"]))
+
+func extract_hint_moves_left(message: String) -> String:
+	for line in message.split("\n", false):
+		var trimmed := str(line).strip_edges()
+		if trimmed.begins_with("To win:"):
+			return trimmed
+	return ""
+
+func parse_hint_move(message: String) -> Dictionary:
+	var marker := "Next move:"
+	var idx := message.find(marker)
+	if idx < 0:
+		return {}
+	var tail := message.substr(idx + marker.length()).strip_edges()
+	var parts := tail.split(" ", false)
+	if parts.size() < 2:
+		return {}
+	var op := op_from_hint_symbol(str(parts[0]))
+	if op.is_empty():
+		return {}
+	return {"op": op, "value": int(parts[1])}
+
+func op_from_hint_symbol(symbol: String) -> String:
+	match symbol:
+		"+":
+			return "add"
+		"−", "-":
+			return "subtract"
+		"×", "x", "*":
+			return "multiply"
+		"÷", "/":
+			return "divide"
+	return ""
+
+func show_hint_move_circle(op: String, value: int) -> void:
+	if hint_move_circle == null or hint_move_label == null:
+		return
+	hint_move_circle.visible = true
+	hint_move_circle.position = Vector2(365, 275)
+	var style: StyleBoxFlat = UIStyles.card(UIStyles.operation_bg(op), UIStyles.operation_border(op), 65)
+	style.border_width_left = 4
+	style.border_width_right = 4
+	style.border_width_top = 4
+	style.border_width_bottom = 4
+	hint_move_circle.add_theme_stylebox_override("panel", style)
+	hint_move_label.text = str(value)
+	UIStyles.apply_font(hint_move_label, UIStyles.FONT_BOLD, 50, UIStyles.operation_text(op))
+
+func hide_hint_move_circle() -> void:
+	if hint_move_circle != null:
+		hint_move_circle.visible = false
 
 func clear_hint_cache() -> void:
 	cached_popup_hint_text = ""
@@ -850,7 +1020,7 @@ func coach_holes_for_area(area: String, fallback: Rect2) -> Array[Dictionary]:
 			for invalid_rect in visible_orbit_button_rects(true):
 				holes.append({"rect": invalid_rect.grow(8), "radius": invalid_rect.size.x * 0.5 + 8.0})
 		"target":
-			holes.append({"rect": fallback.grow(5), "radius": 32.0})
+			holes.append({"rect": fallback.grow(5), "radius": fallback.size.x * 0.5 + 5.0})
 		"op_add", "op_subtract", "op_multiply", "op_divide", "op_unavailable", "hint":
 			holes.append({"rect": fallback.grow(5), "radius": 20.0})
 		_:
@@ -886,7 +1056,9 @@ func hide_coach_hint() -> void:
 func coach_rect_for_area(area: String) -> Rect2:
 	match area:
 		"target":
-			return Rect2(Vector2(140, 152), Vector2(800, 88))
+			if target_panel != null:
+				return Rect2(target_panel.position, target_panel.size)
+			return Rect2(Vector2(540, TOP_STATUS_Y + TOP_STATUS_SIZE.y * 0.5) - TARGET_BUBBLE_SIZE * 0.5, TARGET_BUBBLE_SIZE)
 		"center":
 			return Rect2(SCREEN_CENTER - Vector2(176, 176), Vector2(352, 352))
 		"orbit":
@@ -896,7 +1068,7 @@ func coach_rect_for_area(area: String) -> Rect2:
 		"invalid_orbit":
 			return combined_rect(visible_orbit_button_rects(true), Rect2(Vector2(100, 520), Vector2(880, 880))).grow(12)
 		"ops":
-			return Rect2(Vector2(55, 1638), Vector2(970, 235))
+			return Rect2(operation_legend.position, operation_legend.size)
 		"op_add":
 			return operation_card_rect(0)
 		"op_subtract":
@@ -908,7 +1080,7 @@ func coach_rect_for_area(area: String) -> Rect2:
 		"op_unavailable":
 			return operation_card_rect(4)
 		"hint":
-			return Rect2(Vector2(70, 1534), Vector2(455, 68))
+			return Rect2(Vector2(70, ACTION_BUTTON_Y), Vector2(455, ACTION_BUTTON_HEIGHT))
 	return Rect2(Vector2(140, 152), Vector2(800, 88))
 
 func visible_orbit_button_rects(only_invalid: bool) -> Array[Rect2]:
@@ -918,6 +1090,8 @@ func visible_orbit_button_rects(only_invalid: bool) -> Array[Rect2]:
 	for child in orbit.get_children():
 		var btn := child as Button
 		if btn == null or not btn.visible:
+			continue
+		if bool(btn.get_meta("popping", false)):
 			continue
 		var is_invalid := btn.disabled
 		if only_invalid and not is_invalid:
@@ -940,14 +1114,10 @@ func combined_rect(rects: Array[Rect2], fallback: Rect2) -> Rect2:
 	return result
 
 func operation_card_rect(index: int) -> Rect2:
-	const CARD_SIZE := Vector2(304, 74)
-	const CARD_GAP := 28.0
-	var local_pos := Vector2.ZERO
-	if index < 3:
-		local_pos = Vector2(index * (CARD_SIZE.x + CARD_GAP), 48)
-	else:
-		local_pos = Vector2((index - 3) * (CARD_SIZE.x + CARD_GAP) + (CARD_SIZE.x + CARD_GAP) * 0.5, 138)
-	return Rect2(operation_legend.position + local_pos, CARD_SIZE)
+	if operation_legend != null and operation_legend.has_method("card_rect"):
+		var local_rect: Rect2 = operation_legend.card_rect(index)
+		return Rect2(operation_legend.position + local_rect.position, local_rect.size)
+	return Rect2(operation_legend.position, Vector2(304, 74))
 
 func coach_panel_position_for_rect(rect: Rect2) -> Vector2:
 	var y := rect.position.y + rect.size.y + 24.0

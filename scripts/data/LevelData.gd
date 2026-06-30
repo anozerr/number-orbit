@@ -22,18 +22,18 @@ static func easy_levels() -> Array:
 	return levels_from_specs("Easy", [
 		spec(16, [2, 3, 4], items([9, "add"], [4, "add"]), items([14, "add"], [7, "add"])),
 		spec(37, [2, 3, 4], items([5, "subtract"], [11, "subtract"]), items([2, "subtract"], [14, "subtract"])),
-		spec(39, [2, 3, 4], items([6, "multiply"], [8, "multiply"]), items([4, "multiply"], [5, "multiply"])),
+		spec(2, [2, 3, 4], items([3, "multiply"], [4, "multiply"]), items([5, "multiply"], [6, "multiply"])),
 		spec(120, [3, 4, 5], items([2, "divide"], [3, "divide"], [4, "divide"]), items([5, "divide"], [6, "divide"])),
 		spec(9, [2, 3, 4], items([2, "add"], [3, "add"]), items([7, "add"], [11, "add"])),
 		spec(72, [3, 4, 5], items([6, "subtract"], [12, "subtract"], [4, "subtract"]), items([14, "subtract"], [5, "subtract"])),
-		spec(26, [3, 4, 5], items([8, "multiply"], [3, "multiply"], [6, "multiply"]), items([2, "multiply"], [9, "multiply"])),
+		spec(3, [3, 4, 5], items([2, "multiply"], [3, "multiply"], [4, "multiply"]), items([5, "multiply"], [6, "multiply"])),
 		spec(48, [3, 4, 5], items([2, "divide"], [4, "divide"], [3, "divide"]), items([16, "divide"])),
 		spec(70, [3, 4, 5], items([6, "subtract"], [3, "add"], [13, "add"]), items([12, "subtract"], [11, "add"])),
 		spec(45, [3, 4, 5], items([2, "multiply"], [8, "multiply"], [4, "divide"]), items([6, "multiply"], [9, "divide"])),
-		spec(72, [4, 5, 6], items([9, "add"], [3, "multiply"], [8, "add"], [4, "multiply"]), items([9, "multiply"], [7, "multiply"])),
+		spec(6, [4, 5, 6], items([4, "add"], [3, "multiply"], [2, "add"], [4, "multiply"]), items([5, "multiply"], [7, "add"])),
 		spec(68, [4, 5, 6], items([8, "subtract"], [5, "divide"], [6, "divide"], [2, "divide"]), items([3, "divide"], [12, "subtract"])),
-		spec(65, [4, 5, 6], items([5, "divide"], [2, "add"], [3, "divide"], [14, "add"]), items([7, "divide"], [8, "divide"])),
-		spec(20, [4, 5, 6], items([4, "multiply"], [3, "subtract"], [10, "subtract"], [8, "multiply"]), items([2, "multiply"], [6, "multiply"])),
+		spec(75, [4, 5, 6], items([5, "divide"], [3, "add"], [3, "divide"], [14, "add"]), items([8, "add"], [7, "subtract"])),
+		spec(10, [4, 5, 6], items([3, "multiply"], [5, "subtract"], [8, "add"], [4, "multiply"]), items([2, "multiply"], [6, "add"])),
 		spec(3, [4, 5, 6], items([13, "add"], [12, "subtract"], [5, "add"], [3, "add"]), items([11, "subtract"], [3, "subtract"]))
 	])
 
@@ -158,7 +158,6 @@ static func tutorial_step(id: String, title: String, start: int, thresholds: Arr
 	var data: Dictionary = level(start, start, target, thresholds, allowed_ops, [all_items])
 	data["id"] = id
 	data["title"] = title
-	data["tutorial_op"] = "mixed"
 	data["help_start"] = help_start
 	data["help_after"] = help_after
 	data["coach"] = {"steps": coach_steps}

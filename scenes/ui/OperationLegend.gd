@@ -2,15 +2,18 @@ class_name OperationLegend
 extends Control
 
 const LEGEND_OPS := ["add", "subtract", "multiply", "divide", "unavailable"]
-const CARD_SIZE := Vector2(304, 74)
 const CARD_GAP := 28.0
+const TOP_CARD_SIZE := Vector2(290, 90)
+const BOTTOM_CARD_SIZE := Vector2(450, 90)
+const TOP_Y := 14.0
+const BOTTOM_Y := 126.0
 
 var callout: Control
 var callout_panel_rect := Rect2()
 var callout_version := 0
 
 func _ready() -> void:
-	size = Vector2(970, 220)
+	size = Vector2(970, 232)
 	mouse_filter = Control.MOUSE_FILTER_PASS
 	configure_ops(["add", "subtract", "multiply", "divide"])
 
@@ -21,7 +24,7 @@ func configure_ops(ops: Array) -> void:
 	callout_panel_rect = Rect2()
 	for i in range(LEGEND_OPS.size()):
 		var op: String = str(LEGEND_OPS[i])
-		add_card(op, card_position(i))
+		add_card(op, card_rect(i))
 
 func _gui_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
@@ -33,9 +36,14 @@ func _gui_input(event: InputEvent) -> void:
 		hide_callout()
 
 func card_position(index: int) -> Vector2:
+	return card_rect(index).position
+
+func card_rect(index: int) -> Rect2:
 	if index < 3:
-		return Vector2(index * (CARD_SIZE.x + CARD_GAP), 48)
-	return Vector2((index - 3) * (CARD_SIZE.x + CARD_GAP) + (CARD_SIZE.x + CARD_GAP) * 0.5, 138)
+		var start_x := (size.x - TOP_CARD_SIZE.x * 3.0 - CARD_GAP * 2.0) * 0.5
+		return Rect2(Vector2(start_x + index * (TOP_CARD_SIZE.x + CARD_GAP), TOP_Y), TOP_CARD_SIZE)
+	var bottom_start_x := (size.x - BOTTOM_CARD_SIZE.x * 2.0 - CARD_GAP) * 0.5
+	return Rect2(Vector2(bottom_start_x + (index - 3) * (BOTTOM_CARD_SIZE.x + CARD_GAP), BOTTOM_Y), BOTTOM_CARD_SIZE)
 
 func operation_name(op: String) -> String:
 	match op:
@@ -51,22 +59,24 @@ func operation_name(op: String) -> String:
 			return "Unavailable"
 	return op.capitalize()
 
-func add_card(op: String, pos: Vector2) -> void:
+func add_card(op: String, rect: Rect2) -> void:
 	var button := Button.new()
 	button.text = ""
-	button.position = pos
-	button.size = CARD_SIZE
+	button.position = rect.position
+	button.size = rect.size
 	button.add_theme_stylebox_override("normal", legend_style(op))
 	button.add_theme_stylebox_override("hover", legend_style(op))
 	button.add_theme_stylebox_override("pressed", legend_style(op))
-	button.pressed.connect(show_callout.bind(op, pos + CARD_SIZE * 0.5))
+	button.pressed.connect(show_callout.bind(op, rect.position + rect.size * 0.5))
 	UIStyles.add_press_animation(button)
 	add_child(button)
 
+	var icon_size := Vector2(34, 34)
+	var icon_x := 54.0 if rect.size.x < 330.0 else 118.0
 	var icon := TextureRect.new()
 	icon.texture = UIStyles.ICON_LOCK if op == "unavailable" else UIStyles.operation_icon(op)
-	icon.position = Vector2(54, 22)
-	icon.size = Vector2(30, 30)
+	icon.position = Vector2(icon_x, (rect.size.y - icon_size.y) * 0.5)
+	icon.size = icon_size
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
@@ -77,12 +87,12 @@ func add_card(op: String, pos: Vector2) -> void:
 	var name_lbl := Label.new()
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_lbl.text = operation_name(op)
-	name_lbl.position = Vector2(94, 0)
-	name_lbl.size = Vector2(184, CARD_SIZE.y)
+	name_lbl.position = Vector2(icon_x + 52.0, 0)
+	name_lbl.size = Vector2(rect.size.x - icon_x - 76.0, rect.size.y)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	name_lbl.clip_text = true
-	UIStyles.apply_font(name_lbl, UIStyles.FONT_BOLD, 18 if op == "unavailable" else 20, legend_text_color(op))
+	UIStyles.apply_font(name_lbl, UIStyles.FONT_BOLD, 20, legend_text_color(op))
 	button.add_child(name_lbl)
 
 func legend_style(op: String) -> StyleBoxFlat:

@@ -4,8 +4,6 @@ extends Control
 signal play_pressed
 signal levels_pressed
 signal settings_pressed
-signal reset_progress_pressed
-signal add_bulbs_pressed
 
 var play_button: Button
 var levels_button: Button
@@ -34,7 +32,7 @@ func build() -> void:
 
 	logo_orbit_rect = TextureRect.new()
 	logo_orbit_rect.texture = preload("res://assets/images/logo/home-orbit.png")
-	logo_orbit_base_position = Vector2(16, -205)
+	logo_orbit_base_position = Vector2(-10, -205)
 	logo_orbit_rect.position = logo_orbit_base_position
 	logo_orbit_rect.size = Vector2(1080, 1620)
 	logo_orbit_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -45,7 +43,7 @@ func build() -> void:
 
 	var logo_name := TextureRect.new()
 	logo_name.texture = preload("res://assets/images/logo/name.png")
-	logo_name.position = logo_orbit_base_position + Vector2(-16, 62)
+	logo_name.position = Vector2(0, -143)
 	logo_name.size = logo_orbit_rect.size
 	logo_name.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo_name.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -80,22 +78,6 @@ func build() -> void:
 	settings_btn.pressed.connect(func(): settings_pressed.emit())
 	add_child(settings_btn)
 	UIStyles.icon(UIStyles.ICON_GEAR, settings_btn, Vector2(240, 36), Vector2(38, 38), UIStyles.TEXT)
-
-	var reset_btn := Button.new()
-	reset_btn.text = "Reset progress"
-	reset_btn.position = Vector2(105, 1785)
-	reset_btn.size = Vector2(390, 54)
-	reset_btn.add_theme_font_size_override("font_size", 22)
-	reset_btn.pressed.connect(func(): reset_progress_pressed.emit())
-	add_child(reset_btn)
-
-	var bulbs_btn := Button.new()
-	bulbs_btn.text = "Add 500 bulbs"
-	bulbs_btn.position = Vector2(585, 1785)
-	bulbs_btn.size = Vector2(390, 54)
-	bulbs_btn.add_theme_font_size_override("font_size", 22)
-	bulbs_btn.pressed.connect(func(): add_bulbs_pressed.emit())
-	add_child(bulbs_btn)
 
 func set_continue_mode(has_played: bool, current_level: int, tutorials_complete: bool = true) -> void:
 	if play_button == null:
@@ -137,8 +119,8 @@ func _process(delta: float) -> void:
 		return
 	logo_time += delta
 	var offset := Vector2(
-		sin(logo_time * 1.05) * 6.0 + sin(logo_time * 0.54) * 2.5,
-		cos(logo_time * 0.92) * 6.0
+		sin(logo_time * 1.05) * 3.5 + sin(logo_time * 0.54) * 1.5,
+		cos(logo_time * 0.92) * 5.0
 	)
 	logo_orbit_rect.position = logo_orbit_base_position + offset
-	logo_orbit_rect.rotation_degrees = sin(logo_time * 0.82) * 1.25
+	logo_orbit_rect.rotation_degrees = sin(logo_time * 0.82) * 1.0

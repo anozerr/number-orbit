@@ -12,7 +12,6 @@ var target_number: int = 10
 var moves_used: int = 0
 var max_unlocked_level: int = 1
 var star_ratings: Array = []
-var bulb_rewards_claimed: Array = []
 var tutorial_completed: Array = []
 var has_played: bool = false
 var is_level_failed: bool = false
@@ -37,10 +36,8 @@ func setup(level_data: Array, load_saved: bool = true) -> void:
 	music_volume = 80
 	sound_volume = 80
 	star_ratings.resize(levels.size())
-	bulb_rewards_claimed.resize(levels.size())
 	for i in range(levels.size()):
 		star_ratings[i] = 0
-		bulb_rewards_claimed[i] = false
 	tutorial_completed.resize(LevelData.get_tutorial_levels().size())
 	for i in range(tutorial_completed.size()):
 		tutorial_completed[i] = false
@@ -68,6 +65,9 @@ func unlock_next_level() -> void:
 			return
 		max_unlocked_level = min(levels.size(), max_unlocked_level + 1)
 
+func unlock_level(level_number: int) -> void:
+	max_unlocked_level = max(max_unlocked_level, int(clamp(level_number, 1, levels.size())))
+
 func is_level_group_completed(first_level: int, last_level: int) -> bool:
 	for level_number in range(first_level, last_level + 1):
 		var index: int = level_number - 1
@@ -89,15 +89,6 @@ func set_tutorial_completed(index: int) -> void:
 func is_tutorial_completed(index: int) -> bool:
 	return index >= 0 and index < tutorial_completed.size() and bool(tutorial_completed[index])
 
-func is_tutorial_op_completed(op_index: int) -> bool:
-	var start_index: int = op_index * 3
-	if start_index < 0 or start_index + 2 >= tutorial_completed.size():
-		return false
-	for i in range(3):
-		if not bool(tutorial_completed[start_index + i]):
-			return false
-	return true
-
 func are_all_tutorials_completed() -> bool:
 	for completed in tutorial_completed:
 		if not bool(completed):
@@ -110,7 +101,6 @@ func claim_level_reward(stars: int) -> int:
 	var new_reward: int = reward_for_stars(stars)
 	var delta: int = max(0, new_reward - previous_reward)
 	hint_points += delta
-	bulb_rewards_claimed[index] = new_reward > 0
 	return delta
 
 func reward_for_stars(stars: int) -> int:

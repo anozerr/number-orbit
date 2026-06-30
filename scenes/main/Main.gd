@@ -10,9 +10,6 @@ var state: GameState = GameState.new()
 var orbit_items: Array = []
 var tutorial_levels: Array = []
 var tutorial_mode: bool = false
-var tutorial_select_mode: bool = false
-var tutorial_select_page: String = ""
-var selected_tutorial_op: int = 0
 var level_select_page: String = ""
 var selected_level_difficulty: int = 0
 var tutorial_index: int = 0
@@ -32,7 +29,6 @@ func _ready() -> void:
 	state.setup(LevelData.get_levels())
 	tutorial_levels = LevelData.get_tutorial_levels()
 	build()
-	load_level(state.current_level)
 	show_main_menu()
 
 func _notification(what: int) -> void:
@@ -54,16 +50,16 @@ func build() -> void:
 	main_menu.play_pressed.connect(_on_play_pressed)
 	main_menu.levels_pressed.connect(show_level_select)
 	main_menu.settings_pressed.connect(_on_main_settings_pressed)
-	main_menu.reset_progress_pressed.connect(_on_reset_progress_pressed)
-	main_menu.add_bulbs_pressed.connect(_on_add_bulbs_pressed)
 
 	level_select = get_or_create_screen("LevelSelect", LevelSelectScene) as LevelSelectScreen
 	level_select.back_pressed.connect(_on_level_select_back_pressed)
 	level_select.level_selected.connect(_on_level_selected)
+	level_select.unlock_with_ad_requested.connect(_on_unlock_level_with_ad_requested)
 
 	settings_screen = get_or_create_screen("SettingsScreen", SettingsScene) as SettingsScreen
 	settings_screen.back_pressed.connect(_on_settings_back_pressed)
 	settings_screen.volumes_changed.connect(_on_settings_volumes_changed)
+	settings_screen.reset_progress_requested.connect(_on_reset_progress_pressed)
 	settings_screen.configure(state.music_volume, state.sound_volume)
 
 	game_screen = get_or_create_screen("GameScreen", GameScreenScene) as GameScreen
@@ -72,6 +68,7 @@ func build() -> void:
 	game_screen.restart_pressed.connect(restart_level)
 	game_screen.orbit_pressed.connect(_on_orbit_pressed)
 	game_screen.hint_requested.connect(_on_hint_requested)
+	game_screen.hint_ad_requested.connect(_on_hint_ad_requested)
 
 	complete_popup = get_or_create_screen("LevelCompletePopup", CompletePopupScene) as LevelCompletePopup
 	complete_popup.next_pressed.connect(_on_popup_next_pressed)
@@ -83,6 +80,8 @@ func get_or_create_screen(node_name: String, scene: PackedScene) -> Node:
 		return existing
 	var instance: Node = scene.instantiate()
 	instance.name = node_name
+	if instance is CanvasItem:
+		(instance as CanvasItem).visible = false
 	add_child(instance)
 	return instance
 
@@ -100,8 +99,6 @@ func show_main_menu() -> void:
 
 func show_level_select() -> void:
 	tutorial_mode = false
-	tutorial_select_mode = false
-	tutorial_select_page = ""
 	level_select_page = "all"
 	hide_all()
 	level_select.visible = true
@@ -109,22 +106,11 @@ func show_level_select() -> void:
 
 func show_level_grid(difficulty_index: int = selected_level_difficulty) -> void:
 	tutorial_mode = false
-	tutorial_select_mode = false
-	tutorial_select_page = ""
 	level_select_page = "grid"
 	selected_level_difficulty = int(clamp(difficulty_index, 0, LevelData.DIFFICULTIES.size() - 1))
 	hide_all()
 	level_select.visible = true
 	level_select.rebuild_levels_for_difficulty(selected_level_difficulty, state.star_ratings, state.max_unlocked_level)
-
-func show_tutorial_difficulty_select(op_index: int = selected_tutorial_op) -> void:
-	tutorial_mode = false
-	tutorial_select_mode = true
-	tutorial_select_page = "difficulty"
-	selected_tutorial_op = int(clamp(op_index, 0, 3))
-	hide_all()
-	level_select.visible = true
-	level_select.rebuild_tutorial_difficulty(selected_tutorial_op, state.tutorial_completed)
 
 func show_settings() -> void:
 	hide_all()
@@ -146,12 +132,6 @@ func _on_reset_progress_pressed() -> void:
 	load_level(1)
 	state.save_progress()
 	show_main_menu()
-
-func _on_add_bulbs_pressed() -> void:
-	state.hint_points += 500
-	state.save_progress()
-	if main_menu != null:
-		main_menu.pulse_play_button()
 
 func _on_game_settings_pressed() -> void:
 	return_to_game_after_settings = true
@@ -180,13 +160,6 @@ func _on_play_pressed() -> void:
 	show_game()
 
 func _on_level_selected(level_number: int) -> void:
-	if tutorial_select_mode:
-		if tutorial_select_page == "ops":
-			show_tutorial_difficulty_select(level_number - 1)
-		else:
-			load_tutorial_level(selected_tutorial_op * 3 + level_number - 1, true)
-			show_game()
-		return
 	if level_number < 0:
 		load_tutorial_level(first_unfinished_tutorial_index(), true)
 		state.has_played = true
@@ -198,11 +171,18 @@ func _on_level_selected(level_number: int) -> void:
 	state.save_progress()
 	show_game()
 
+func _on_unlock_level_with_ad_requested(level_number: int) -> void:
+	if level_number <= 0:
+		return
+	state.unlock_level(level_number)
+	state.has_played = true
+	state.save_progress()
+	level_select.hide_locked_level_popup()
+	load_level(level_number)
+	show_game()
+
 func _on_level_select_back_pressed() -> void:
-	if tutorial_select_mode and tutorial_select_page == "difficulty":
-		show_level_select()
-	else:
-		show_main_menu()
+	show_main_menu()
 
 func _on_game_back_pressed() -> void:
 	if tutorial_mode:
@@ -434,10 +414,13 @@ func unlock_orbit_input_after_animation() -> void:
 func complete_level() -> void:
 	var stars: int = StarCalculator.calculate(state.moves_used, active_level_data())
 	if tutorial_mode:
+		var was_tutorial_completed := state.is_tutorial_completed(tutorial_index)
 		state.set_tutorial_completed(tutorial_index)
 		state.save_progress()
 		refresh_game_screen()
 		var teaser := str(active_level_data().get("complete_teaser", "Excellent. Continue when you are ready."))
+		if was_tutorial_completed and teaser == "You’re ready. Levels are now unlocked.":
+			teaser = "Great practice. You can return to levels whenever you are ready."
 		complete_popup.show_result(active_level_title(), 0, state.moves_used, true, -1, state.hint_points, false, teaser)
 		return
 	var reward: int = state.claim_level_reward(stars)
@@ -506,6 +489,13 @@ func _on_hint_requested() -> void:
 		game_screen.show_hint_result(hint_text, state.hint_points)
 		refresh_game_screen()
 
+func _on_hint_ad_requested() -> void:
+	if tutorial_mode:
+		return
+	state.hint_points += GameState.HINT_COST
+	state.save_progress()
+	_on_hint_requested()
+
 func next_hint_text() -> String:
 	var data: Dictionary = active_level_data()
 	var thresholds: Array = StarCalculator.sorted_thresholds(data)
@@ -520,7 +510,12 @@ func next_hint_text() -> String:
 
 func find_hint_path(current_number: int, target_number: int, depth: int) -> Array:
 	var visited: Dictionary = {}
-	return search_hint_path(current_number, target_number, orbit_items.duplicate(), depth, visited)
+	for search_depth in range(1, depth + 1):
+		visited.clear()
+		var path := search_hint_path(current_number, target_number, orbit_items.duplicate(), search_depth, visited)
+		if not path.is_empty():
+			return path
+	return []
 
 func search_hint_path(current_number: int, target_number: int, remaining_items: Array, depth: int, visited: Dictionary) -> Array:
 	if depth <= 0:
@@ -565,8 +560,7 @@ func active_level_data() -> Dictionary:
 
 func active_level_title() -> String:
 	if tutorial_mode:
-		var data: Dictionary = active_level_data()
-		return str(data.get("title", "TUTORIAL"))
+		return "TUTORIAL"
 	return "LEVEL %d" % state.current_level
 
 func _on_popup_next_pressed() -> void:
