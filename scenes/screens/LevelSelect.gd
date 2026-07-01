@@ -10,16 +10,15 @@ var locked_popup_body: Label
 var locked_popup_ad_button: Button
 var locked_popup_close_button: Button
 var locked_popup_level_number: int = -1
+var last_scroll: ScrollContainer
 
 func _ready() -> void:
 	size = Vector2(1080, 1920)
 
-func rebuild(star_ratings: Array, max_unlocked_level: int) -> void:
-	rebuild_level_difficulties(star_ratings, max_unlocked_level, [])
-
 func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tutorial_completed: Array = []) -> void:
 	for child in get_children():
 		child.queue_free()
+	last_scroll = null
 
 	var title := Label.new()
 	title.text = "LEVELS"
@@ -30,15 +29,8 @@ func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tu
 	UIStyles.apply_font(title, UIStyles.FONT_BOLD, 44, UIStyles.TEXT)
 	add_child(title)
 
-	var back := Button.new()
-	back.text = ""
-	back.size = Vector2(88, 88)
-	back.position = Vector2(70, 70)
-	back.add_theme_font_size_override("font_size", 28)
-	UIStyles.menu_button(back)
+	var back := UIStyles.back_button(self)
 	back.pressed.connect(func(): back_pressed.emit())
-	add_child(back)
-	UIStyles.icon(UIStyles.ICON_BACK, back, Vector2(23, 23), Vector2(42, 42), UIStyles.TEXT)
 
 	var scroll := ScrollContainer.new()
 	scroll.position = Vector2(0, 220)
@@ -46,6 +38,7 @@ func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tu
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	add_child(scroll)
+	last_scroll = scroll
 
 	var content := Control.new()
 	scroll.add_child(content)
@@ -59,6 +52,7 @@ func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tu
 		y += 95.0
 	content.custom_minimum_size = Vector2(1080, y - 95.0)
 	build_locked_level_popup()
+	center_on_level_row(max_unlocked_level)
 
 func add_tutorials_section(parent: Control, y: float, tutorial_completed: Array) -> float:
 	var title := Label.new()
@@ -160,69 +154,24 @@ func add_difficulty_section(parent: Control, difficulty_index: int, y: float, st
 
 	return start_y + 5.0 * gap_y
 
-func rebuild_levels_for_difficulty(difficulty_index: int, star_ratings: Array, max_unlocked_level: int) -> void:
-	for child in get_children():
-		child.queue_free()
+func center_on_level_row(level_number: int) -> void:
+	if last_scroll == null or level_number <= 0:
+		return
+	await get_tree().process_frame
+	var row_center_y := row_center_for_level(level_number)
+	var desired := int(max(0.0, row_center_y - last_scroll.size.y * 0.5))
+	last_scroll.scroll_vertical = desired
 
-	var clamped_index: int = int(clamp(difficulty_index, 0, LevelData.DIFFICULTIES.size() - 1))
-	var title := Label.new()
-	title.text = "%s LEVELS" % str(LevelData.DIFFICULTIES[clamped_index]).to_upper()
-	title.position = Vector2(0, 95)
-	title.size = Vector2(1080, 120)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(title, UIStyles.FONT_BOLD, 44, UIStyles.TEXT)
-	add_child(title)
-
-	var back := Button.new()
-	back.text = ""
-	back.size = Vector2(88, 88)
-	back.position = Vector2(70, 70)
-	back.add_theme_font_size_override("font_size", 28)
-	UIStyles.menu_button(back)
-	back.pressed.connect(func(): back_pressed.emit())
-	add_child(back)
-	UIStyles.icon(UIStyles.ICON_BACK, back, Vector2(23, 23), Vector2(42, 42), UIStyles.TEXT)
-
-	var start_x := 190
-	var start_y := 250
-	var gap_x := 245
-	var gap_y := 215
-	var button_size := Vector2(185, 175)
-
-	for i in range(LevelData.LEVELS_PER_DIFFICULTY):
-		var local_level: int = i + 1
-		var global_level: int = clamped_index * LevelData.LEVELS_PER_DIFFICULTY + local_level
-		var unlocked: bool = global_level <= max_unlocked_level
-		var rating: int = int(star_ratings[global_level - 1]) if global_level - 1 < star_ratings.size() else 0
-		var completed: bool = rating > 0
-		var btn := Button.new()
-		btn.text = str(global_level)
-		btn.size = button_size
-		btn.position = Vector2(start_x + (i % 3) * gap_x, start_y + int(float(i) / 3.0) * gap_y)
-		btn.add_theme_font_size_override("font_size", 42)
-		btn.disabled = false
-		style_level_button(btn, completed, unlocked, clamped_index)
-		UIStyles.add_press_animation(btn)
-		if unlocked:
-			btn.pressed.connect(_on_level_button_pressed.bind(global_level))
-		else:
-			var can_watch_ad := global_level == max_unlocked_level + 1
-			btn.pressed.connect(show_locked_level_popup.bind(global_level, can_watch_ad))
-		add_child(btn)
-
-		var star_lbl := Label.new()
-		star_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		star_lbl.position = Vector2(0, button_size.y - 58)
-		star_lbl.size = Vector2(button_size.x, 40)
-		star_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		star_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		btn.add_child(star_lbl)
-		if unlocked:
-			add_star_icons(star_lbl, rating)
-		else:
-			UIStyles.icon(UIStyles.ICON_LOCK, star_lbl, Vector2(76, 2), Vector2(32, 32), UIStyles.DISABLED)
-	build_locked_level_popup()
+func row_center_for_level(level_number: int) -> float:
+	var tutorials_height := 20.0 + 88.0 + 160.0
+	var section_gap := 95.0
+	var difficulty_height := 88.0 + 5.0 * 215.0
+	var difficulty_index := LevelData.difficulty_index_for_level(level_number)
+	var local_index := LevelData.local_level_number(level_number) - 1
+	var section_y := tutorials_height + section_gap + float(difficulty_index) * (difficulty_height + section_gap)
+	var start_y := section_y + 88.0
+	var row := int(float(local_index) / 3.0)
+	return start_y + float(row) * 215.0 + 87.5
 
 func difficulty_color(index: int) -> Color:
 	match index:

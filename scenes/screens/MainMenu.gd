@@ -107,13 +107,6 @@ func set_levels_enabled(enabled: bool) -> void:
 	if levels_icon != null:
 		levels_icon.modulate = color
 
-func pulse_play_button() -> void:
-	if play_button == null:
-		return
-	var tween := play_button.create_tween()
-	tween.tween_property(play_button, "scale", Vector2(1.035, 1.035), 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tween.tween_property(play_button, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-
 func _process(delta: float) -> void:
 	if logo_orbit_rect == null:
 		return

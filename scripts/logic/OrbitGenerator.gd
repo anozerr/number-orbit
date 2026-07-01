@@ -24,10 +24,8 @@ static func sanitize_items(data: Dictionary, current_number: int, planned_items:
 		var item: Dictionary = raw_item as Dictionary
 		var op: String = str(item["op"])
 		var value: int = int(item["value"])
-		var key: String = "%s_%d" % [op, value]
-		if value > 0 and not used.has(key):
+		if value > 0:
 			result.append({"value": value, "op": op})
-			used[key] = true
 
 	if not result.is_empty():
 		return result

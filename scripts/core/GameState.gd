@@ -68,16 +68,6 @@ func unlock_next_level() -> void:
 func unlock_level(level_number: int) -> void:
 	max_unlocked_level = max(max_unlocked_level, int(clamp(level_number, 1, levels.size())))
 
-func is_level_group_completed(first_level: int, last_level: int) -> bool:
-	for level_number in range(first_level, last_level + 1):
-		var index: int = level_number - 1
-		if index < 0 or index >= star_ratings.size() or int(star_ratings[index]) <= 0:
-			return false
-	return true
-
-func is_level_unlocked(level_number: int) -> bool:
-	return level_number <= max_unlocked_level
-
 func set_stars(stars: int) -> void:
 	var index: int = current_level - 1
 	star_ratings[index] = max(int(star_ratings[index]), stars)
@@ -170,6 +160,7 @@ func load_save_v1(data: Dictionary) -> void:
 	load_stars_from_ids(data.get("stars_by_level_id", {}))
 	load_tutorials_from_ids(data.get("tutorial_completed_by_id", {}))
 	recalculate_max_unlocked_level()
+	max_unlocked_level = max(max_unlocked_level, int(clamp(int(data.get("max_unlocked_level", max_unlocked_level)), 1, levels.size())))
 	var saved_level := level_number_for_id(str(data.get("current_level_id", "")))
 	if saved_level > 0:
 		current_level = saved_level

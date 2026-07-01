@@ -20,60 +20,28 @@ static func get_levels() -> Array:
 
 static func easy_levels() -> Array:
 	return levels_from_specs("Easy", [
-		spec(16, [2, 3, 4], items([9, "add"], [4, "add"]), items([14, "add"], [7, "add"])),
-		spec(37, [2, 3, 4], items([5, "subtract"], [11, "subtract"]), items([2, "subtract"], [14, "subtract"])),
-		spec(2, [2, 3, 4], items([3, "multiply"], [4, "multiply"]), items([5, "multiply"], [6, "multiply"])),
-		spec(120, [3, 4, 5], items([2, "divide"], [3, "divide"], [4, "divide"]), items([5, "divide"], [6, "divide"])),
-		spec(9, [2, 3, 4], items([2, "add"], [3, "add"]), items([7, "add"], [11, "add"])),
-		spec(72, [3, 4, 5], items([6, "subtract"], [12, "subtract"], [4, "subtract"]), items([14, "subtract"], [5, "subtract"])),
-		spec(3, [3, 4, 5], items([2, "multiply"], [3, "multiply"], [4, "multiply"]), items([5, "multiply"], [6, "multiply"])),
-		spec(48, [3, 4, 5], items([2, "divide"], [4, "divide"], [3, "divide"]), items([16, "divide"])),
-		spec(70, [3, 4, 5], items([6, "subtract"], [3, "add"], [13, "add"]), items([12, "subtract"], [11, "add"])),
-		spec(45, [3, 4, 5], items([2, "multiply"], [8, "multiply"], [4, "divide"]), items([6, "multiply"], [9, "divide"])),
-		spec(6, [4, 5, 6], items([4, "add"], [3, "multiply"], [2, "add"], [4, "multiply"]), items([5, "multiply"], [7, "add"])),
-		spec(68, [4, 5, 6], items([8, "subtract"], [5, "divide"], [6, "divide"], [2, "divide"]), items([3, "divide"], [12, "subtract"])),
-		spec(75, [4, 5, 6], items([5, "divide"], [3, "add"], [3, "divide"], [14, "add"]), items([8, "add"], [7, "subtract"])),
-		spec(10, [4, 5, 6], items([3, "multiply"], [5, "subtract"], [8, "add"], [4, "multiply"]), items([2, "multiply"], [6, "add"])),
-		spec(3, [4, 5, 6], items([13, "add"], [12, "subtract"], [5, "add"], [3, "add"]), items([11, "subtract"], [3, "subtract"]))
+		spec(10, [2, 2, 2], items([4, "add"], [5, "add"]), items([8, "add"])),
+		spec(31, [2, 2, 2], items([6, "subtract"], [5, "subtract"]), items([4, "subtract"])),
+		spec(5, [3, 3, 3], items([3, "add"], [4, "add"], [6, "add"]), items([2, "add"])),
+		spec(3, [2, 2, 2], items([4, "multiply"], [2, "multiply"]), items([5, "multiply"])),
+		spec(40, [3, 3, 3], items([8, "subtract"], [6, "subtract"], [5, "subtract"]), items([2, "subtract"], [3, "subtract"])),
+		spec(72, [2, 2, 2], items([3, "divide"], [4, "divide"]), items([6, "divide"])),
+		spec(2, [3, 3, 3], items([3, "multiply"], [4, "multiply"], [2, "multiply"]), items([5, "multiply"])),
+		spec(240, [3, 3, 3], items([5, "divide"], [4, "divide"], [3, "divide"]), items([2, "divide"], [8, "divide"])),
+		spec(8, [3, 3, 3], items([6, "add"], [3, "add"], [4, "subtract"]), items([8, "add"], [10, "add"], [7, "subtract"])),
+		spec(20, [4, 4, 4], items([7, "add"], [5, "subtract"], [8, "add"], [4, "subtract"]), items([5, "add"], [3, "subtract"])),
+		spec(14, [3, 3, 3], items([4, "subtract"], [3, "multiply"], [5, "subtract"]), items([6, "subtract"], [2, "multiply"])),
+		spec(10, [3, 3, 3], items([2, "add"], [2, "divide"], [5, "add"]), items([3, "add"], [4, "add"], [3, "divide"])),
+		spec(2, [3, 3, 3], items([2, "multiply"], [2, "add"], [4, "add"]), items([5, "add"], [6, "multiply"], [7, "multiply"])),
+		spec(36, [3, 3, 3], items([8, "subtract"], [4, "divide"], [5, "subtract"]), items([6, "subtract"], [6, "divide"])),
+		spec(30, [3, 3, 3], items([3, "multiply"], [5, "divide"], [2, "divide"]), items([2, "multiply"], [3, "divide"]))
 	])
 
 static func medium_levels() -> Array:
-	return levels_from_specs("Medium", [
-		spec(31, [3, 4, 5], items([8, "add"], [11, "subtract"], [4, "multiply"]), items([7, "multiply"], [9, "add"])),
-		spec(58, [3, 4, 5], items([2, "divide"], [13, "subtract"], [8, "add"]), items([10, "add"], [14, "subtract"])),
-		spec(60, [3, 4, 5], items([6, "divide"], [5, "multiply"], [2, "add"]), items([14, "add"], [3, "divide"])),
-		spec(50, [3, 4, 5], items([5, "divide"], [8, "subtract"], [9, "multiply"]), items([6, "divide"], [5, "subtract"])),
-		spec(52, [3, 4, 5], items([3, "subtract"], [5, "multiply"], [11, "add"]), items([8, "multiply"], [2, "subtract"])),
-		spec(43, [4, 5, 6], items([6, "subtract"], [9, "subtract"], [2, "add"], [6, "divide"]), items([11, "subtract"], [7, "add"])),
-		spec(66, [4, 5, 6], items([5, "multiply"], [3, "divide"], [3, "add"], [14, "add"]), items([2, "divide"], [7, "divide"])),
-		spec(26, [4, 5, 6], items([2, "divide"], [4, "subtract"], [9, "multiply"], [3, "divide"]), items([13, "subtract"], [8, "multiply"])),
-		spec(37, [4, 5, 6], items([5, "subtract"], [14, "add"], [11, "add"], [2, "multiply"]), items([9, "multiply"], [3, "add"])),
-		spec(63, [4, 5, 6], items([6, "add"], [3, "divide"], [2, "add"], [7, "subtract"]), items([9, "divide"], [10, "subtract"])),
-		spec(3, [5, 6, 7], items([14, "add"], [8, "add"], [8, "multiply"], [13, "add"], [3, "divide"]), items([6, "divide"], [2, "multiply"], [6, "multiply"])),
-		spec(5, [5, 6, 7], items([5, "divide"], [6, "multiply"], [3, "multiply"], [14, "subtract"], [2, "subtract"]), items([5, "multiply"], [9, "multiply"], [7, "multiply"])),
-		spec(20, [5, 6, 7], items([11, "add"], [7, "subtract"], [6, "multiply"], [13, "add"], [9, "multiply"]), items([2, "add"], [11, "subtract"], [3, "multiply"])),
-		spec(71, [5, 6, 7], items([13, "add"], [4, "divide"], [2, "subtract"], [12, "add"], [8, "add"]), items([7, "add"], [4, "add"], [3, "subtract"])),
-		spec(75, [5, 6, 7], items([7, "multiply"], [3, "multiply"], [5, "divide"], [4, "add"], [7, "add"]), items([9, "multiply"], [9, "divide"], [8, "multiply"]))
-	])
+	return generated_progression_levels("Medium", 16)
 
 static func hard_levels() -> Array:
-	return levels_from_specs("Hard", [
-		spec(19, [5, 6, 7], items([2, "multiply"], [9, "add"], [2, "subtract"], [4, "add"], [7, "divide"]), items([4, "subtract"], [9, "divide"], [4, "multiply"])),
-		spec(42, [5, 6, 7], items([7, "divide"], [11, "add"], [8, "multiply"], [9, "add"], [6, "subtract"]), items([14, "subtract"], [2, "divide"], [3, "subtract"])),
-		spec(48, [5, 6, 7], items([6, "subtract"], [6, "divide"], [8, "multiply"], [14, "add"], [9, "add"]), items([2, "add"], [4, "divide"], [9, "subtract"])),
-		spec(59, [5, 6, 7], items([3, "multiply"], [6, "multiply"], [5, "subtract"], [7, "divide"], [13, "add"]), items([2, "divide"], [14, "add"], [9, "divide"])),
-		spec(78, [6, 7, 8], items([10, "subtract"], [2, "divide"], [7, "subtract"], [7, "multiply"], [3, "add"], [2, "add"]), items([13, "add"], [7, "divide"], [10, "add"])),
-		spec(50, [6, 7, 8], items([2, "divide"], [10, "add"], [7, "add"], [4, "multiply"], [8, "add"], [10, "subtract"]), items([7, "multiply"], [2, "multiply"], [3, "divide"])),
-		spec(28, [6, 7, 8], items([7, "divide"], [4, "multiply"], [10, "add"], [11, "subtract"], [5, "multiply"], [6, "add"]), items([7, "multiply"], [8, "add"], [14, "add"])),
-		spec(40, [6, 7, 8], items([8, "divide"], [4, "add"], [9, "multiply"], [12, "add"], [3, "divide"], [2, "subtract"]), items([2, "multiply"], [7, "divide"], [9, "divide"])),
-		spec(52, [7, 8, 9], items([2, "divide"], [8, "multiply"], [12, "add"], [5, "multiply"], [3, "multiply"], [4, "add"], [2, "subtract"]), items([7, "divide"], [5, "divide"], [11, "subtract"])),
-		spec(56, [7, 8, 9], items([9, "add"], [4, "multiply"], [6, "multiply"], [9, "subtract"], [3, "divide"], [11, "subtract"], [13, "subtract"]), items([4, "add"], [10, "subtract"], [9, "divide"])),
-		spec(75, [7, 8, 9], items([11, "subtract"], [4, "multiply"], [2, "divide"], [8, "subtract"], [6, "multiply"], [10, "add"], [2, "multiply"]), items([3, "divide"], [7, "subtract"], [9, "multiply"])),
-		spec(53, [7, 8, 9], items([9, "add"], [6, "multiply"], [12, "subtract"], [5, "subtract"], [5, "divide"], [11, "add"], [5, "add"]), items([9, "multiply"], [2, "divide"], [9, "divide"])),
-		spec(24, [8, 9, 10], items([14, "add"], [7, "multiply"], [11, "subtract"], [5, "divide"], [13, "add"], [6, "multiply"], [8, "subtract"], [11, "add"]), items([5, "add"], [6, "divide"])),
-		spec(71, [8, 9, 10], items([2, "multiply"], [9, "multiply"], [11, "add"], [7, "add"], [2, "divide"], [8, "divide"], [9, "divide"], [2, "subtract"]), items([8, "multiply"], [4, "divide"])),
-		spec(29, [8, 9, 10], items([12, "add"], [2, "multiply"], [9, "subtract"], [9, "multiply"], [5, "subtract"], [2, "divide"], [6, "multiply"], [5, "add"]), items([7, "divide"], [3, "add"]))
-	])
+	return generated_progression_levels("Hard", 31)
 
 static func get_tutorial_levels() -> Array:
 	var steps: Array = [
@@ -93,11 +61,11 @@ static func get_tutorial_levels() -> Array:
 		tutorial_step(
 			"tutorial_subtract", "TUTORIAL: SUBTRACT", 9, [2, 3, 4], ["subtract"],
 			items([2, "subtract"], [4, "subtract"]), items([8, "subtract"]),
-			"Yellow orbit numbers subtract from the center.",
-			"Some yellow numbers can turn grey if they would push the center below 1.",
+			"Orange orbit numbers subtract from the center.",
+			"Some orange numbers can turn grey if they would push the center below 1.",
 			[
-				{"area": "op_subtract", "text": "Yellow means Subtract. It moves the center number downward."},
-				{"area": "orbit_buttons", "text": "Choose the yellow numbers in the right order. After one move, a too-large subtract can become grey."}
+				{"area": "op_subtract", "text": "Orange means Subtract. It moves the center number downward."},
+				{"area": "orbit_buttons", "text": "Choose the orange numbers in the right order. After one move, a too-large subtract can become grey."}
 			],
 			"Good. But sometimes the fastest path is to make the number bigger first.",
 			{
@@ -173,19 +141,106 @@ static func levels_from_specs(difficulty: String, specs: Array) -> Array:
 		result.append(data)
 	return result
 
+static func generated_progression_levels(difficulty: String, first_global_level: int) -> Array:
+	var result: Array = []
+	for offset in range(15):
+		var global_level := first_global_level + offset
+		var local_index := offset + 1
+		var solution_length := progression_solution_length(global_level)
+		var item_count := progression_item_count(global_level)
+		result.append(generated_progression_level(difficulty, local_index, global_level, solution_length, item_count))
+	return result
+
+static func progression_solution_length(global_level: int) -> int:
+	if global_level <= 20:
+		return 4
+	if global_level <= 25:
+		return 5
+	if global_level <= 30:
+		return 6
+	if global_level <= 35:
+		return 7
+	if global_level <= 40:
+		return 8
+	return 9
+
+static func progression_item_count(global_level: int) -> int:
+	if global_level <= 20:
+		return 7
+	if global_level <= 25:
+		return 8
+	if global_level <= 30:
+		return 9
+	if global_level <= 35:
+		return 10
+	if global_level <= 40:
+		return 11
+	return 12
+
+static func generated_progression_level(difficulty: String, local_index: int, global_level: int, solution_length: int, item_count: int) -> Dictionary:
+	var template := progression_template(global_level)
+	var start := int(template["start"])
+	var solution: Array = template["solution"] as Array
+	var target := apply_item_sequence(start, solution)
+	var all_items: Array = template["items"] as Array
+	var thresholds := [solution_length, solution_length + 1, solution_length + 2]
+	var data := level(start, start, target, thresholds, ops_from_items(all_items), [all_items])
+	data["difficulty"] = difficulty
+	data["local_index"] = local_index
+	data["solution_length"] = solution_length
+	data["sequence"] = solution
+	data["star_bands"] = [
+		{"stars": 3, "moves": thresholds[0]},
+		{"stars": 2, "moves": thresholds[1]},
+		{"stars": 1, "moves": thresholds[2]}
+	]
+	return data
+
+static func progression_template(global_level: int) -> Dictionary:
+	var raw_templates := {
+		16: {"start": 16, "items": [[8, "add"], [40, "add"], [2, "divide"], [8, "divide"], [8, "multiply"], [4, "subtract"], [5, "multiply"]], "solution": [[8, "multiply"], [2, "divide"], [8, "add"], [40, "add"]]},
+		17: {"start": 76, "items": [[32, "subtract"], [17, "add"], [2, "divide"], [5, "subtract"], [7, "multiply"], [44, "add"], [13, "add"]], "solution": [[13, "add"], [17, "add"], [44, "add"], [5, "subtract"]]},
+		18: {"start": 181, "items": [[41, "subtract"], [4, "add"], [9, "subtract"], [12, "divide"], [5, "subtract"], [9, "multiply"], [16, "add"]], "solution": [[41, "subtract"], [16, "add"], [9, "subtract"], [5, "subtract"]]},
+		19: {"start": 214, "items": [[2, "divide"], [29, "subtract"], [20, "add"], [4, "multiply"], [30, "subtract"], [35, "add"], [50, "subtract"]], "solution": [[29, "subtract"], [20, "add"], [35, "add"], [30, "subtract"]]},
+		20: {"start": 196, "items": [[30, "add"], [15, "subtract"], [43, "add"], [2, "multiply"], [4, "divide"], [20, "subtract"], [3, "multiply"]], "solution": [[20, "subtract"], [43, "add"], [15, "subtract"], [30, "add"]]},
+		21: {"start": 40, "items": [[7, "add"], [16, "add"], [9, "multiply"], [3, "divide"], [10, "divide"], [22, "add"], [16, "subtract"], [14, "subtract"]], "solution": [[16, "add"], [7, "add"], [3, "divide"], [9, "multiply"], [22, "add"]]},
+		22: {"start": 23, "items": [[8, "multiply"], [19, "multiply"], [2, "subtract"], [26, "add"], [23, "divide"], [17, "subtract"], [16, "subtract"], [22, "add"]], "solution": [[22, "add"], [8, "multiply"], [17, "subtract"], [2, "subtract"], [16, "subtract"]]},
+		23: {"start": 15, "items": [[34, "add"], [3, "divide"], [8, "multiply"], [2, "subtract"], [15, "divide"], [6, "multiply"], [5, "multiply"], [32, "add"]], "solution": [[3, "divide"], [34, "add"], [2, "subtract"], [32, "add"], [6, "multiply"]]},
+		24: {"start": 182, "items": [[12, "add"], [16, "add"], [33, "add"], [3, "multiply"], [2, "divide"], [17, "subtract"], [31, "subtract"], [2, "multiply"]], "solution": [[31, "subtract"], [2, "multiply"], [16, "add"], [12, "add"], [17, "subtract"]]},
+		25: {"start": 142, "items": [[12, "divide"], [3, "divide"], [3, "multiply"], [24, "subtract"], [6, "add"], [24, "add"], [5, "multiply"], [2, "divide"]], "solution": [[5, "multiply"], [3, "multiply"], [6, "add"], [2, "divide"], [3, "divide"]]},
+		26: {"start": 27, "items": [[19, "add"], [2, "add"], [3, "multiply"], [16, "subtract"], [3, "divide"], [5, "add"], [3, "subtract"], [11, "subtract"], [6, "multiply"]], "solution": [[5, "add"], [6, "multiply"], [3, "divide"], [19, "add"], [3, "multiply"], [11, "subtract"]]},
+		27: {"start": 80, "items": [[6, "multiply"], [17, "add"], [44, "subtract"], [2, "divide"], [5, "multiply"], [29, "subtract"], [4, "divide"], [22, "add"], [2, "multiply"]], "solution": [[29, "subtract"], [44, "subtract"], [6, "multiply"], [5, "multiply"], [2, "multiply"], [22, "add"]]},
+		28: {"start": 87, "items": [[3, "divide"], [11, "subtract"], [20, "subtract"], [5, "multiply"], [42, "add"], [6, "multiply"], [29, "divide"], [38, "add"], [45, "subtract"]], "solution": [[5, "multiply"], [45, "subtract"], [11, "subtract"], [20, "subtract"], [38, "add"], [42, "add"]]},
+		29: {"start": 100, "items": [[4, "divide"], [35, "subtract"], [20, "add"], [5, "multiply"], [5, "divide"], [7, "multiply"], [24, "subtract"], [26, "add"], [44, "add"]], "solution": [[5, "divide"], [20, "add"], [44, "add"], [5, "multiply"], [26, "add"], [35, "subtract"]]},
+		30: {"start": 29, "items": [[56, "multiply"], [61, "divide"], [31, "add"], [4, "multiply"], [35, "add"], [3, "multiply"], [18, "add"], [38, "subtract"], [38, "add"]], "solution": [[4, "multiply"], [3, "multiply"], [18, "add"], [31, "add"], [38, "add"], [35, "add"]]},
+		31: {"start": 346, "items": [[9, "multiply"], [35, "add"], [40, "subtract"], [2, "divide"], [8, "add"], [34, "subtract"], [12, "divide"], [33, "subtract"], [12, "add"], [6, "multiply"]], "solution": [[40, "subtract"], [34, "subtract"], [6, "multiply"], [8, "add"], [2, "divide"], [9, "multiply"], [12, "divide"]]},
+		32: {"start": 346, "items": [[3, "divide"], [9, "multiply"], [33, "subtract"], [7, "multiply"], [53, "divide"], [3, "subtract"], [5, "multiply"], [39, "subtract"], [30, "subtract"], [41, "add"]], "solution": [[30, "subtract"], [39, "subtract"], [41, "add"], [7, "multiply"], [3, "divide"], [33, "subtract"], [3, "subtract"]]},
+		33: {"start": 77, "items": [[9, "multiply"], [21, "add"], [5, "multiply"], [27, "subtract"], [32, "subtract"], [9, "divide"], [45, "subtract"], [7, "divide"], [15, "add"], [18, "subtract"]], "solution": [[15, "add"], [9, "multiply"], [32, "subtract"], [18, "subtract"], [45, "subtract"], [27, "subtract"], [21, "add"]]},
+		34: {"start": 352, "items": [[11, "divide"], [31, "subtract"], [9, "multiply"], [17, "add"], [8, "divide"], [21, "add"], [4, "subtract"], [36, "add"], [5, "multiply"], [43, "add"]], "solution": [[31, "subtract"], [17, "add"], [36, "add"], [11, "divide"], [43, "add"], [21, "add"], [9, "multiply"]]},
+		35: {"start": 242, "items": [[2, "divide"], [29, "subtract"], [27, "add"], [3, "multiply"], [9, "add"], [22, "subtract"], [6, "multiply"], [5, "multiply"], [12, "divide"], [31, "subtract"]], "solution": [[6, "multiply"], [5, "multiply"], [31, "subtract"], [27, "add"], [3, "multiply"], [12, "divide"], [2, "divide"]]},
+		36: {"start": 287, "items": [[6, "multiply"], [7, "multiply"], [38, "add"], [36, "add"], [8, "multiply"], [29, "subtract"], [44, "subtract"], [35, "add"], [9, "divide"], [37, "add"], [27, "add"]], "solution": [[38, "add"], [35, "add"], [9, "divide"], [27, "add"], [37, "add"], [36, "add"], [7, "multiply"], [44, "subtract"]]},
+		37: {"start": 151, "items": [[7, "multiply"], [6, "subtract"], [32, "add"], [13, "divide"], [2, "multiply"], [10, "divide"], [9, "add"], [4, "divide"], [29, "add"], [4, "subtract"], [25, "add"]], "solution": [[9, "add"], [4, "divide"], [25, "add"], [7, "multiply"], [2, "multiply"], [32, "add"], [29, "add"], [4, "subtract"]]},
+		38: {"start": 231, "items": [[12, "subtract"], [3, "subtract"], [8, "divide"], [19, "add"], [2, "add"], [8, "multiply"], [10, "add"], [13, "subtract"], [34, "subtract"], [3, "multiply"], [45, "subtract"]], "solution": [[45, "subtract"], [34, "subtract"], [8, "divide"], [19, "add"], [8, "multiply"], [2, "add"], [3, "multiply"], [12, "subtract"]]},
+		39: {"start": 211, "items": [[3, "multiply"], [7, "divide"], [20, "subtract"], [40, "add"], [12, "add"], [9, "subtract"], [16, "add"], [2, "add"], [9, "multiply"], [19, "divide"], [15, "add"]], "solution": [[40, "add"], [15, "add"], [7, "divide"], [9, "multiply"], [3, "multiply"], [9, "subtract"], [20, "subtract"], [12, "add"]]},
+		40: {"start": 239, "items": [[3, "multiply"], [7, "divide"], [20, "subtract"], [40, "add"], [12, "add"], [9, "subtract"], [16, "add"], [2, "add"], [9, "multiply"], [17, "divide"], [15, "add"]], "solution": [[40, "add"], [15, "add"], [7, "divide"], [9, "multiply"], [3, "multiply"], [9, "subtract"], [20, "subtract"], [12, "add"]]},
+		41: {"start": 338, "items": [[36, "subtract"], [45, "add"], [28, "add"], [8, "divide"], [37, "subtract"], [2, "multiply"], [15, "add"], [25, "subtract"], [5, "multiply"], [2, "add"], [2, "subtract"], [10, "divide"]], "solution": [[25, "subtract"], [15, "add"], [8, "divide"], [28, "add"], [45, "add"], [2, "multiply"], [5, "multiply"], [37, "subtract"], [36, "subtract"]]},
+		42: {"start": 48, "items": [[5, "multiply"], [23, "add"], [15, "subtract"], [8, "divide"], [8, "add"], [36, "add"], [27, "add"], [42, "add"], [11, "add"], [13, "add"], [33, "add"], [25, "subtract"]], "solution": [[36, "add"], [13, "add"], [33, "add"], [42, "add"], [11, "add"], [23, "add"], [5, "multiply"], [27, "add"], [8, "add"]]},
+		43: {"start": 117, "items": [[18, "subtract"], [13, "add"], [27, "subtract"], [21, "subtract"], [27, "add"], [4, "multiply"], [4, "divide"], [25, "subtract"], [9, "multiply"], [16, "add"], [36, "add"], [7, "divide"]], "solution": [[36, "add"], [16, "add"], [4, "multiply"], [27, "add"], [13, "add"], [9, "multiply"], [25, "subtract"], [27, "subtract"], [4, "divide"]]},
+		44: {"start": 219, "items": [[10, "divide"], [16, "add"], [39, "add"], [22, "subtract"], [11, "add"], [4, "multiply"], [45, "add"], [21, "add"], [3, "multiply"], [2, "add"], [2, "subtract"], [6, "divide"]], "solution": [[11, "add"], [10, "divide"], [16, "add"], [45, "add"], [21, "add"], [39, "add"], [3, "multiply"], [22, "subtract"], [4, "multiply"]]},
+		45: {"start": 380, "items": [[4, "add"], [27, "add"], [22, "subtract"], [26, "subtract"], [2, "subtract"], [7, "multiply"], [19, "subtract"], [8, "divide"], [41, "add"], [30, "add"], [3, "divide"], [32, "add"]], "solution": [[2, "subtract"], [27, "add"], [3, "divide"], [41, "add"], [30, "add"], [7, "multiply"], [4, "add"], [19, "subtract"], [32, "add"]]}
+	}
+	var raw: Dictionary = raw_templates[global_level] as Dictionary
+	return {"start": int(raw["start"]), "items": item_list(raw["items"] as Array), "solution": item_list(raw["solution"] as Array)}
+
 static func spec(start: int, thresholds: Array, solution: Array, distractors: Array) -> Dictionary:
 	return {"start": start, "thresholds": thresholds, "solution": solution, "distractors": distractors}
 
 static func spec_to_level(raw: Dictionary, difficulty: String, local_index: int) -> Dictionary:
 	var solution: Array = raw["solution"] as Array
 	var distractors: Array = raw["distractors"] as Array
-	if difficulty != "Easy":
-		distractors = add_neutral_detours(solution, distractors, 2)
 	var target: int = apply_item_sequence(int(raw["start"]), solution)
-	var all_items: Array = safe_level_items(int(raw["start"]), target, solution, distractors)
+	var all_items: Array = interleave_items(solution, distractors)
 	var thresholds: Array = raw["thresholds"] as Array
-	if difficulty != "Easy":
-		thresholds = [solution.size(), solution.size() + 2, solution.size() + 4]
 	var data: Dictionary = level(int(raw["start"]), int(raw["start"]), target, thresholds, ops_from_items(all_items), [all_items])
 	data["difficulty"] = difficulty
 	data["local_index"] = local_index
@@ -193,70 +248,22 @@ static func spec_to_level(raw: Dictionary, difficulty: String, local_index: int)
 	data["sequence"] = solution
 	return data
 
-static func add_neutral_detours(solution: Array, distractors: Array, pair_count: int) -> Array:
-	var result: Array = distractors.duplicate(true)
-	var used: Dictionary = {}
-	for raw_group in [solution, distractors]:
-		for raw_item in raw_group:
-			var step: Dictionary = raw_item as Dictionary
-			used["%s_%d" % [str(step["op"]), int(step["value"])]] = true
-	var values := [15, 13, 11, 10, 8, 6, 4, 2]
-	var added := 0
-	for value in values:
-		if added >= pair_count:
-			break
-		var add_key := "add_%d" % value
-		var subtract_key := "subtract_%d" % value
-		if used.has(add_key) or used.has(subtract_key):
-			continue
-		result.append({"value": value, "op": "add"})
-		result.append({"value": value, "op": "subtract"})
-		used[add_key] = true
-		used[subtract_key] = true
-		added += 1
-	return result
-
-static func safe_level_items(start: int, target: int, solution: Array, distractors: Array) -> Array:
-	var kept_distractors: Array = []
-	for raw_item in distractors:
-		var candidate_distractors: Array = kept_distractors.duplicate()
-		candidate_distractors.append(raw_item)
-		var candidate_items: Array = interleave_items(solution, candidate_distractors)
-		if shortest_path_within(start, target, candidate_items, max(0, solution.size() - 1)) == -1:
-			kept_distractors.append(raw_item)
-	return interleave_items(solution, kept_distractors)
-
-static func shortest_path_within(start: int, target: int, level_items: Array, max_depth: int) -> int:
-	if start == target:
-		return 0
-	for depth in range(1, max_depth + 1):
-		if has_path_at_depth(start, target, level_items, depth):
-			return depth
-	return -1
-
-static func has_path_at_depth(current: int, target: int, remaining: Array, depth: int) -> bool:
-	if depth <= 0:
-		return current == target
-	for i in range(remaining.size()):
-		var item: Dictionary = remaining[i] as Dictionary
-		var op := str(item["op"])
-		var value := int(item["value"])
-		if not OperationLogic.can_apply(current, value, op):
-			continue
-		var next_remaining := remaining.duplicate()
-		next_remaining.remove_at(i)
-		if has_path_at_depth(OperationLogic.apply(current, value, op), target, next_remaining, depth - 1):
-			return true
-	return false
-
 static func interleave_items(solution: Array, distractors: Array) -> Array:
-	var result: Array = []
-	var max_count: int = max(solution.size(), distractors.size())
-	for i in range(max_count):
-		if i < distractors.size():
-			result.append(distractors[i])
-		if i < solution.size():
-			result.append(solution[i])
+	if solution.size() <= 1:
+		return distractors + solution
+	var gaps: int = solution.size() - 1
+	var distractor_count: int = distractors.size()
+	var result: Array = [solution[0]]
+	var used: int = 0
+	for g in range(gaps):
+		var count: int = int((g + 1) * distractor_count / float(gaps)) - int(g * distractor_count / float(gaps))
+		for _i in range(count):
+			result.append(distractors[used])
+			used += 1
+		result.append(solution[g + 1])
+	while used < distractor_count:
+		result.append(distractors[used])
+		used += 1
 	return result
 
 static func level(start: int, original_start: int, target: int, thresholds: Array, allowed_ops: Array, turns: Array) -> Dictionary:
@@ -305,3 +312,9 @@ static func items(a: Array, b: Array = [], c: Array = [], d: Array = [], e: Arra
 
 static func item(raw: Array) -> Dictionary:
 	return {"value": int(raw[0]), "op": str(raw[1])}
+
+static func item_list(raw_items: Array) -> Array:
+	var result: Array = []
+	for raw in raw_items:
+		result.append(item(raw as Array))
+	return result

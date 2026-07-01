@@ -10,8 +10,6 @@ var state: GameState = GameState.new()
 var orbit_items: Array = []
 var tutorial_levels: Array = []
 var tutorial_mode: bool = false
-var level_select_page: String = ""
-var selected_level_difficulty: int = 0
 var tutorial_index: int = 0
 var return_to_game_after_settings: bool = false
 var orbit_input_locked: bool = false
@@ -99,18 +97,9 @@ func show_main_menu() -> void:
 
 func show_level_select() -> void:
 	tutorial_mode = false
-	level_select_page = "all"
 	hide_all()
 	level_select.visible = true
 	level_select.rebuild_level_difficulties(state.star_ratings, state.max_unlocked_level, state.tutorial_completed)
-
-func show_level_grid(difficulty_index: int = selected_level_difficulty) -> void:
-	tutorial_mode = false
-	level_select_page = "grid"
-	selected_level_difficulty = int(clamp(difficulty_index, 0, LevelData.DIFFICULTIES.size() - 1))
-	hide_all()
-	level_select.visible = true
-	level_select.rebuild_levels_for_difficulty(selected_level_difficulty, state.star_ratings, state.max_unlocked_level)
 
 func show_settings() -> void:
 	hide_all()
@@ -196,7 +185,6 @@ func _on_game_back_pressed() -> void:
 func load_level(level_number: int) -> void:
 	tutorial_mode = false
 	var data: Dictionary = state.load_level(level_number)
-	selected_level_difficulty = LevelData.difficulty_index_for_level(state.current_level)
 	orbit_items = assign_orbit_slots(OrbitGenerator.initial_items(data, state.current_number))
 	if game_screen != null:
 		game_screen.clear_hint_cache()
@@ -357,9 +345,8 @@ func restart_level() -> void:
 func refresh_game_screen() -> void:
 	var data: Dictionary = active_level_data()
 	var thresholds: Array = StarCalculator.sorted_thresholds(data)
-	if not tutorial_mode and str(data.get("difficulty", "")) == "Easy":
-		thresholds = [999, 999, 999]
-	game_screen.configure(active_level_title(), state.current_number, state.target_number, state.moves_used, thresholds, visible_orbit_items(), data["allowed_ops"] as Array, state.is_level_failed, state.hint_points, tutorial_mode, tutorial_help_text(data), tutorial_coach_data(data))
+	var star_bands: Array = StarCalculator.star_bands(data)
+	game_screen.configure(active_level_title(), state.current_number, state.target_number, state.moves_used, thresholds, star_bands, visible_orbit_items(), data["allowed_ops"] as Array, state.is_level_failed, state.hint_points, tutorial_mode, tutorial_help_text(data), tutorial_coach_data(data))
 
 func visible_orbit_items() -> Array:
 	var result: Array = []
@@ -498,8 +485,11 @@ func _on_hint_ad_requested() -> void:
 
 func next_hint_text() -> String:
 	var data: Dictionary = active_level_data()
-	var thresholds: Array = StarCalculator.sorted_thresholds(data)
-	var max_depth: int = int(min(orbit_items.size(), max(1, int(thresholds[thresholds.size() - 1]) - state.moves_used + 2)))
+	var max_depth: int = orbit_items.size()
+	if str(data.get("difficulty", "")) != "Easy":
+		var thresholds: Array = StarCalculator.sorted_thresholds(data)
+		var one_star_budget: int = int(thresholds[thresholds.size() - 1]) - state.moves_used
+		max_depth = min(orbit_items.size(), max(0, one_star_budget))
 	var path: Array = find_hint_path(state.current_number, state.target_number, max_depth)
 	if path.is_empty():
 		return "No winning hint is available from this position. Try restarting the level."

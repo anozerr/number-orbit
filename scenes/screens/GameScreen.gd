@@ -133,6 +133,7 @@ var current_hint_points: int = 0
 var current_moves: int = 0
 var current_target_value: int = 0
 var current_thresholds: Array = []
+var current_star_bands: Array = []
 var current_is_tutorial := false
 var cached_popup_hint_text: String = ""
 var cached_popup_move_index: int = -1
@@ -216,7 +217,7 @@ func build() -> void:
 	target_panel.size = TARGET_BUBBLE_SIZE
 	target_panel.z_index = 6
 	target_panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	target_panel.add_theme_stylebox_override("panel", UIStyles.card(Color("#FFF4CF"), Color("#F0C057"), 75))
+	target_panel.add_theme_stylebox_override("panel", UIStyles.card(Color("#BDF3F1"), Color("#22B8B8"), 75))
 	add_child(target_panel)
 	target_panel.gui_input.connect(_on_goal_panel_input)
 
@@ -226,7 +227,7 @@ func build() -> void:
 	goal_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	goal_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	goal_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	UIStyles.apply_font(goal_label, UIStyles.FONT_BOLD, 46, Color("#B17600"))
+	UIStyles.apply_font(goal_label, UIStyles.FONT_BOLD, 46, Color("#075E66"))
 	target_panel.add_child(goal_label)
 
 	info_panel = Panel.new()
@@ -246,15 +247,8 @@ func build() -> void:
 	UIStyles.apply_font(tutorial_help_label, UIStyles.FONT_MEDIUM, 24, UIStyles.MUTED)
 	info_panel.add_child(tutorial_help_label)
 
-	var back := Button.new()
-	back.text = ""
-	back.position = Vector2(EDGE_MARGIN, TOP_BUTTON_Y)
-	back.size = Vector2(88, 88)
-	back.add_theme_font_size_override("font_size", 36)
-	UIStyles.menu_button(back)
+	var back := UIStyles.back_button(self, Vector2(EDGE_MARGIN, TOP_BUTTON_Y))
 	back.pressed.connect(func(): back_pressed.emit())
-	add_child(back)
-	UIStyles.icon(UIStyles.ICON_BACK, back, Vector2(23, 23), Vector2(42, 42), UIStyles.TEXT)
 
 	var settings := Button.new()
 	settings.text = ""
@@ -311,13 +305,14 @@ func build() -> void:
 	build_hint_popup()
 	build_coach_overlay()
 
-func configure(title_text: String, current_number: int, target_number: int, moves: int, thresholds: Array, orbit_items: Array, allowed_ops: Array, failed: bool, hint_points: int, tutorial: bool = false, tutorial_help: String = "", coach_hint: Dictionary = {}) -> void:
+func configure(title_text: String, current_number: int, target_number: int, moves: int, thresholds: Array, star_bands: Array, orbit_items: Array, allowed_ops: Array, failed: bool, hint_points: int, tutorial: bool = false, tutorial_help: String = "", coach_hint: Dictionary = {}) -> void:
 	level_failed = failed
 	current_number_value = current_number
 	current_hint_points = hint_points
 	current_moves = moves
 	current_target_value = target_number
 	current_thresholds = thresholds.duplicate()
+	current_star_bands = star_bands.duplicate(true)
 	current_is_tutorial = tutorial
 	if cached_popup_move_index != current_moves:
 		cached_popup_hint_text = ""
@@ -366,19 +361,10 @@ func configure(title_text: String, current_number: int, target_number: int, move
 	queue_redraw()
 
 func pop_center_number() -> void:
-	if center_label == null:
-		return
-	center_label.pivot_offset = center_label.size * 0.5
-	var tween: Tween = center_label.create_tween()
-	tween.tween_property(center_label, "scale", Vector2(1.08, 1.08), 0.08).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tween.tween_property(center_label, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	UIStyles.pop_scale(center_label, 1.08, 0.08, 0.14)
 
 func pulse_failure_controls() -> void:
-	if restart_button == null:
-		return
-	var tween := restart_button.create_tween()
-	tween.tween_property(restart_button, "scale", Vector2(1.04, 1.04), 0.13).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tween.tween_property(restart_button, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	UIStyles.pop_scale(restart_button, 1.04, 0.13, 0.18)
 
 func _on_moves_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
@@ -405,15 +391,45 @@ func _on_goal_panel_input(event: InputEvent) -> void:
 		show_temporary_help("Reach %d exactly by tapping orbit numbers in the right order." % current_target_value, false)
 
 func star_requirements_text() -> String:
-	if current_thresholds.size() < 3:
+	if current_star_bands.is_empty() and current_thresholds.size() < 3:
 		return "Use fewer moves to earn more stars."
+	if not current_star_bands.is_empty():
+		if current_star_bands.size() == 1 and int((current_star_bands[0] as Dictionary).get("stars", 0)) == 3:
+			return "Finish the target in %d moves for three stars." % int((current_star_bands[0] as Dictionary).get("moves", 0))
+		var parts: Array[String] = []
+		for raw_band in current_star_bands:
+			var band: Dictionary = raw_band as Dictionary
+			parts.append("%s %d moves" % [star_text(int(band.get("stars", 1))), int(band.get("moves", 0))])
+		return "    ".join(parts)
 	if current_thresholds[0] == current_thresholds[1] and current_thresholds[1] == current_thresholds[2]:
 		return "These early levels are simple: finish the target and you keep three stars."
 	return "★★★ %d moves    ★★ %d moves    ★ %d moves" % [int(current_thresholds[0]), int(current_thresholds[1]), int(current_thresholds[2])]
 
+func star_text(count: int) -> String:
+	match count:
+		3:
+			return "★★★"
+		2:
+			return "★★"
+	return "★"
+
 func progress_comment_text(moves: int) -> String:
 	if current_thresholds.size() < 3:
 		return "Choose orbit numbers carefully. Tap Target or Moves for details."
+	if not current_star_bands.is_empty():
+		if moves == 0:
+			return "Choose orbit numbers carefully. Tap Target or Moves for details."
+		for raw_band in current_star_bands:
+			var band: Dictionary = raw_band as Dictionary
+			if moves <= int(band.get("moves", 0)):
+				match int(band.get("stars", 1)):
+					3:
+						return "Good move. You are still on track for three stars."
+					2:
+						return "Still good. Two stars are still within reach."
+					_:
+						return "Almost there. Finish the target with the moves you have left."
+		return "Almost there. Finish the target with the moves you have left."
 	var three_star_moves := int(current_thresholds[0])
 	var two_star_moves := int(current_thresholds[1])
 	if moves == 0:
@@ -466,14 +482,6 @@ func update_restart_button_layout() -> void:
 	restart_button_label.position = Vector2(start_x + icon_size + gap, 0)
 	restart_button_label.size = Vector2(label_width + 8.0, restart_button.size.y)
 
-func pop_moves_panel() -> void:
-	if moves_panel == null:
-		return
-	moves_panel.pivot_offset = moves_panel.size * 0.5
-	var tween := moves_panel.create_tween()
-	tween.tween_property(moves_panel, "scale", Vector2(1.035, 1.035), 0.10).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tween.tween_property(moves_panel, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-
 func show_temporary_help(text: String, error: bool = false) -> void:
 	temporary_help_version += 1
 	var version := temporary_help_version
@@ -512,20 +520,10 @@ func set_info_text_alpha(alpha: float, error: bool = false) -> void:
 	tutorial_help_label.add_theme_color_override("font_color", color)
 
 func pop_goal_panel() -> void:
-	if target_panel == null:
-		return
-	target_panel.pivot_offset = target_panel.size * 0.5
-	var tween := target_panel.create_tween()
-	tween.tween_property(target_panel, "scale", Vector2(1.045, 1.045), 0.10).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tween.tween_property(target_panel, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	UIStyles.pop_scale(target_panel, 1.045)
 
 func pop_status_panel() -> void:
-	if goal_panel == null:
-		return
-	goal_panel.pivot_offset = goal_panel.size * 0.5
-	var tween := goal_panel.create_tween()
-	tween.tween_property(goal_panel, "scale", Vector2(1.018, 1.018), 0.10).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tween.tween_property(goal_panel, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	UIStyles.pop_scale(goal_panel, 1.018)
 
 func empty_panel_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
@@ -1100,10 +1098,6 @@ func visible_orbit_button_rects(only_invalid: bool) -> Array[Rect2]:
 			continue
 		rects.append(Rect2(btn.position, btn.size).grow(4))
 	return rects
-
-func first_invalid_orbit_button_rect() -> Rect2:
-	var rects := visible_orbit_button_rects(true)
-	return rects[0] if not rects.is_empty() else Rect2()
 
 func combined_rect(rects: Array[Rect2], fallback: Rect2) -> Rect2:
 	if rects.is_empty():

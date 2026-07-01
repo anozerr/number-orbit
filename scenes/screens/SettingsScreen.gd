@@ -31,15 +31,8 @@ func build() -> void:
 	UIStyles.apply_font(title, UIStyles.FONT_BOLD, 44, UIStyles.TEXT)
 	add_child(title)
 
-	var back_btn := Button.new()
-	back_btn.text = ""
-	back_btn.position = Vector2(70, 70)
-	back_btn.size = Vector2(88, 88)
-	back_btn.add_theme_font_size_override("font_size", 28)
-	UIStyles.menu_button(back_btn)
+	var back_btn := UIStyles.back_button(self)
 	back_btn.pressed.connect(func(): back_pressed.emit())
-	add_child(back_btn)
-	UIStyles.icon(UIStyles.ICON_BACK, back_btn, Vector2(23, 23), Vector2(42, 42), UIStyles.TEXT)
 
 	add_slider_block("MUSIC VOLUME", UIStyles.ICON_MUSIC, music_volume, 300, "music")
 	add_divider(250, 525)

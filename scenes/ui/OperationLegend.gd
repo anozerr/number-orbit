@@ -35,9 +35,6 @@ func _gui_input(event: InputEvent) -> void:
 	if not callout_panel_rect.has_point(mouse_event.position):
 		hide_callout()
 
-func card_position(index: int) -> Vector2:
-	return card_rect(index).position
-
 func card_rect(index: int) -> Rect2:
 	if index < 3:
 		var start_x := (size.x - TOP_CARD_SIZE.x * 3.0 - CARD_GAP * 2.0) * 0.5
@@ -211,7 +208,7 @@ func description_for(op: String) -> String:
 		"add":
 			return "Green orbit numbers are added\nto the center number."
 		"subtract":
-			return "Yellow orbit numbers are subtracted\nfrom the center number."
+			return "Orange orbit numbers are subtracted\nfrom the center number."
 		"multiply":
 			return "Red orbit numbers multiply\nthe center number."
 		"divide":

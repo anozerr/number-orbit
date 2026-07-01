@@ -16,7 +16,6 @@ const ICON_BULB: Texture2D = preload("res://assets/images/icons/lightbulb.svg")
 const ICON_LOCK: Texture2D = preload("res://assets/images/icons/lock.svg")
 const ICON_MINUS: Texture2D = preload("res://assets/images/icons/minus.svg")
 const ICON_MUSIC: Texture2D = preload("res://assets/images/icons/music-notes.svg")
-const ICON_PLAY: Texture2D = preload("res://assets/images/icons/play.svg")
 const ICON_PLAY_WHITE: Texture2D = preload("res://assets/images/icons/play-white.svg")
 const ICON_PLUS: Texture2D = preload("res://assets/images/icons/plus.svg")
 const ICON_RESTART: Texture2D = preload("res://assets/images/icons/arrow-counter-clockwise.svg")
@@ -155,9 +154,6 @@ static func is_inside_rounded_rect(x: int, y: int, w: int, h: int, radius: int) 
 	var cy: int = clamp(y, radius, h - radius - 1)
 	return Vector2(x - cx, y - cy).length() <= float(radius)
 
-static func pill(label: Label) -> void:
-	label.add_theme_stylebox_override("normal", soft_panel(Color.WHITE, 24))
-
 static func icon(texture: Texture2D, parent: Node, position: Vector2, size: Vector2, color: Color = TEXT) -> TextureRect:
 	var rect: TextureRect = TextureRect.new()
 	rect.texture = texture
@@ -170,6 +166,24 @@ static func icon(texture: Texture2D, parent: Node, position: Vector2, size: Vect
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(rect)
 	return rect
+
+static func back_button(parent: Node, position: Vector2 = Vector2(70, 70)) -> Button:
+	var button := Button.new()
+	button.text = ""
+	button.position = position
+	button.size = Vector2(88, 88)
+	menu_button(button)
+	parent.add_child(button)
+	icon(ICON_BACK, button, Vector2(23, 23), Vector2(42, 42), TEXT)
+	return button
+
+static func pop_scale(control: Control, peak: float, out_duration: float = 0.10, in_duration: float = 0.14) -> void:
+	if control == null:
+		return
+	control.pivot_offset = control.size * 0.5
+	var tween: Tween = control.create_tween()
+	tween.tween_property(control, "scale", Vector2(peak, peak), out_duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(control, "scale", Vector2.ONE, in_duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 static func add_press_animation(button: Button) -> void:
 	button.pivot_offset = button.size * 0.5
@@ -237,7 +251,7 @@ static func operation_bg(op: String) -> Color:
 		"add":
 			return Color("#E5F6DA")
 		"subtract":
-			return Color("#FFF5D6")
+			return Color("#FFEDD5")
 	return Color.WHITE
 
 static func operation_border(op: String) -> Color:
@@ -249,7 +263,7 @@ static func operation_border(op: String) -> Color:
 		"add":
 			return Color("#58A94F")
 		"subtract":
-			return Color("#E0A000")
+			return Color("#F59E0B")
 	return BORDER
 
 static func operation_text(op: String) -> Color:
@@ -261,5 +275,5 @@ static func operation_text(op: String) -> Color:
 		"add":
 			return Color("#184A24")
 		"subtract":
-			return Color("#B97B00")
+			return Color("#92400E")
 	return TEXT
