@@ -11,11 +11,12 @@ var orbit_items: Array = []
 var tutorial_levels: Array = []
 var tutorial_mode: bool = false
 var tutorial_index: int = 0
-var return_to_game_after_settings: bool = false
+var settings_return_screen: String = "menu"
 var orbit_input_locked: bool = false
 var shown_tutorial_coaches: Dictionary = {}
 
-var bg: TextureRect
+var bg: ThemeBackground
+var current_screen: String = "menu"
 var main_menu: MainMenuScreen
 var level_select: LevelSelectScreen
 var settings_screen: SettingsScreen
@@ -26,6 +27,8 @@ func _ready() -> void:
 	randomize()
 	state.setup(LevelData.get_levels())
 	tutorial_levels = LevelData.get_tutorial_levels()
+	UIStyles.set_theme(state.theme)
+	Locale.set_language(state.language)
 	build()
 	show_main_menu()
 
@@ -34,15 +37,9 @@ func _notification(what: int) -> void:
 		state.save_progress()
 
 func build() -> void:
-	bg = TextureRect.new()
-	bg.texture = preload("res://assets/images/backgrounds/background.png")
-	bg.position = Vector2.ZERO
-	bg.size = Vector2(1080, 1920)
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bg.stretch_mode = TextureRect.STRETCH_SCALE
-	bg.z_index = -10
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(bg)
+	if bg == null:
+		bg = ThemeBackground.new()
+		add_child(bg)
 
 	main_menu = get_or_create_screen("MainMenu", MainMenuScene) as MainMenuScreen
 	main_menu.play_pressed.connect(_on_play_pressed)
@@ -53,12 +50,15 @@ func build() -> void:
 	level_select.back_pressed.connect(_on_level_select_back_pressed)
 	level_select.level_selected.connect(_on_level_selected)
 	level_select.unlock_with_ad_requested.connect(_on_unlock_level_with_ad_requested)
+	level_select.settings_pressed.connect(_on_levels_settings_pressed)
 
 	settings_screen = get_or_create_screen("SettingsScreen", SettingsScene) as SettingsScreen
 	settings_screen.back_pressed.connect(_on_settings_back_pressed)
 	settings_screen.volumes_changed.connect(_on_settings_volumes_changed)
 	settings_screen.reset_progress_requested.connect(_on_reset_progress_pressed)
-	settings_screen.configure(state.music_volume, state.sound_volume)
+	settings_screen.theme_selected.connect(_on_theme_changed)
+	settings_screen.language_changed.connect(_on_language_changed)
+	settings_screen.configure(state.music_volume, state.sound_volume, state.theme, state.language)
 
 	game_screen = get_or_create_screen("GameScreen", GameScreenScene) as GameScreen
 	game_screen.back_pressed.connect(_on_game_back_pressed)
@@ -91,27 +91,74 @@ func hide_all() -> void:
 	complete_popup.hide_popup()
 
 func show_main_menu() -> void:
+	current_screen = "menu"
 	hide_all()
 	main_menu.visible = true
 	main_menu.set_continue_mode(state.has_played, state.current_level, state.are_all_tutorials_completed())
 
 func show_level_select() -> void:
+	current_screen = "levels"
 	tutorial_mode = false
 	hide_all()
 	level_select.visible = true
 	level_select.rebuild_level_difficulties(state.star_ratings, state.max_unlocked_level, state.tutorial_completed)
 
 func show_settings() -> void:
+	current_screen = "settings"
 	hide_all()
 	settings_screen.visible = true
 
 func show_game() -> void:
+	current_screen = "game"
 	hide_all()
 	game_screen.visible = true
 	refresh_game_screen()
 
+func _on_theme_changed(theme_name: String) -> void:
+	if state.theme == theme_name:
+		return
+	state.theme = theme_name
+	state.save_progress()
+	UIStyles.set_theme(theme_name)
+	rebuild_all()
+
+func _on_language_changed(language_code: String) -> void:
+	if state.language == language_code:
+		return
+	state.language = language_code
+	state.save_progress()
+	Locale.set_language(language_code)
+	rebuild_all()
+
+# Rebuild every screen's visuals for the current theme/language, preserving the
+# active screen and in-progress game state.
+func rebuild_all() -> void:
+	if bg != null:
+		bg.refresh()
+	main_menu.build()
+	settings_screen.configure(state.music_volume, state.sound_volume, state.theme, state.language)
+	game_screen.build()
+	complete_popup.build()
+	# LevelSelect rebuilds its own structure when shown (needs star data).
+	show_current_screen()
+
+func show_current_screen() -> void:
+	match current_screen:
+		"levels":
+			show_level_select()
+		"settings":
+			show_settings()
+		"game":
+			show_game()
+		_:
+			show_main_menu()
+
 func _on_main_settings_pressed() -> void:
-	return_to_game_after_settings = false
+	settings_return_screen = "menu"
+	show_settings()
+
+func _on_levels_settings_pressed() -> void:
+	settings_return_screen = "levels"
 	show_settings()
 
 func _on_reset_progress_pressed() -> void:
@@ -123,16 +170,18 @@ func _on_reset_progress_pressed() -> void:
 	show_main_menu()
 
 func _on_game_settings_pressed() -> void:
-	return_to_game_after_settings = true
+	settings_return_screen = "game"
 	show_settings()
 
 func _on_settings_back_pressed() -> void:
 	state.save_progress()
-	if return_to_game_after_settings:
-		return_to_game_after_settings = false
-		show_game()
-	else:
-		show_main_menu()
+	match settings_return_screen:
+		"game":
+			show_game()
+		"levels":
+			show_level_select()
+		_:
+			show_main_menu()
 
 func _on_settings_volumes_changed(music_value: int, sound_value: int) -> void:
 	state.music_volume = music_value
@@ -405,9 +454,10 @@ func complete_level() -> void:
 		state.set_tutorial_completed(tutorial_index)
 		state.save_progress()
 		refresh_game_screen()
-		var teaser := str(active_level_data().get("complete_teaser", "Excellent. Continue when you are ready."))
-		if was_tutorial_completed and teaser == "You’re ready. Levels are now unlocked.":
-			teaser = "Great practice. You can return to levels whenever you are ready."
+		var base := str(active_level_data().get("id", "tutorial")).trim_prefix("tutorial_")
+		var teaser := Locale.t("tut.%s.teaser" % base, str(active_level_data().get("complete_teaser", "Excellent. Continue when ready.")))
+		if was_tutorial_completed and base == "order":
+			teaser = Locale.t("tut.order.teaser_replay", "Great practice. Return to levels anytime.")
 		complete_popup.show_result(active_level_title(), 0, state.moves_used, true, -1, state.hint_points, false, teaser)
 		return
 	var reward: int = state.claim_level_reward(stars)
@@ -463,7 +513,9 @@ func _on_hint_requested() -> void:
 		return
 
 	var hint_text: String = next_hint_text()
-	if hint_text.begins_with("No "):
+	# Success always carries the internal "Next move:" marker; its absence means
+	# no winning path was found (language-independent).
+	if not hint_text.contains("Next move:"):
 		game_screen.show_hint_result(hint_text, state.hint_points)
 		return
 
@@ -492,11 +544,13 @@ func next_hint_text() -> String:
 		max_depth = min(orbit_items.size(), max(0, one_star_budget))
 	var path: Array = find_hint_path(state.current_number, state.target_number, max_depth)
 	if path.is_empty():
-		return "No winning hint is available from this position. Try restarting the level."
+		return Locale.t("hint.none", "No winning move from here. Try Restart.")
 	var item: Dictionary = path[0] as Dictionary
 	var op: String = str(item["op"])
 	var value: int = int(item["value"])
-	return "To win: %d move(s) left.\nNext move: %s %d" % [path.size(), OperationLogic.symbol(op), value]
+	# "Next move:" is an internal parse marker (never shown); the to-win line is
+	# the only visible part, so it is localized.
+	return "%s\nNext move: %s %d" % [Locale.t("hint.to_win", "To win: %d move(s) left.") % path.size(), OperationLogic.symbol(op), value]
 
 func find_hint_path(current_number: int, target_number: int, depth: int) -> Array:
 	var visited: Dictionary = {}
@@ -550,8 +604,8 @@ func active_level_data() -> Dictionary:
 
 func active_level_title() -> String:
 	if tutorial_mode:
-		return "TUTORIAL"
-	return "LEVEL %d" % state.current_level
+		return Locale.t("game.tutorial", "TUTORIAL")
+	return Locale.t("game.level", "LEVEL %d") % state.current_level
 
 func _on_popup_next_pressed() -> void:
 	complete_popup.hide_popup()
@@ -580,9 +634,10 @@ func _on_popup_levels_pressed() -> void:
 func tutorial_help_text(data: Dictionary) -> String:
 	if not tutorial_mode:
 		return ""
+	var base := str(data.get("id", "tutorial")).trim_prefix("tutorial_")
 	if state.moves_used == 0:
-		return str(data.get("help_start", "Choose orbit numbers to transform the center number."))
-	return str(data.get("help_after", "Nice. Keep going until the center reaches the target."))
+		return Locale.t("tut.%s.start" % base, str(data.get("help_start", "Tap orbit numbers to change the center.")))
+	return Locale.t("tut.%s.after" % base, str(data.get("help_after", "Keep going to the target.")))
 
 func tutorial_coach_data(data: Dictionary) -> Dictionary:
 	if not tutorial_mode:

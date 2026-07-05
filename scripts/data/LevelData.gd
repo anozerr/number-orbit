@@ -48,69 +48,69 @@ static func get_tutorial_levels() -> Array:
 		tutorial_step(
 			"tutorial_add", "TUTORIAL: ADD", 1, [2, 3, 4], ["add"],
 			items([4, "add"], [5, "add"]), items([2, "add"]),
-			"Tap green orbit numbers. They add to the center number.",
-			"Nice. Keep adding until the center reaches the target.",
+			"Tap green numbers — they add up.",
+			"Keep adding up to the target.",
 			[
-				{"area": "center", "text": "This purple circle is your center number. Every orbit tap changes it."},
-				{"area": "target", "text": "TARGET is the exact number you need to reach."},
-				{"area": "orbit_buttons", "text": "These green orbit circles are available moves. Tap one to use it, then it disappears."},
-				{"area": "op_add", "text": "Green means Add. Add increases the center number."}
+				{"area": "center", "key": "coach.add.center", "text": "This purple circle is your center number. Every tap changes it."},
+				{"area": "target", "key": "coach.add.target", "text": "TARGET is the exact number to reach."},
+				{"area": "orbit_buttons", "key": "coach.add.orbit", "text": "These green circles are your moves. Tap one to use it, then it disappears."},
+				{"area": "op_add", "key": "coach.add.op", "text": "Green means Add — it increases the center number."}
 			],
-			"Excellent. Now let’s talk about taking numbers away."
+			"Excellent. Now let's talk about taking numbers away."
 		),
 		tutorial_step(
 			"tutorial_subtract", "TUTORIAL: SUBTRACT", 9, [2, 3, 4], ["subtract"],
 			items([2, "subtract"], [4, "subtract"]), items([8, "subtract"]),
-			"Orange orbit numbers subtract from the center.",
-			"Some orange numbers can turn grey if they would push the center below 1.",
+			"Orange numbers subtract from center.",
+			"Grey means it would drop below 1.",
 			[
-				{"area": "op_subtract", "text": "Orange means Subtract. It moves the center number downward."},
-				{"area": "orbit_buttons", "text": "Choose the orange numbers in the right order. After one move, a too-large subtract can become grey."}
+				{"area": "op_subtract", "key": "coach.subtract.op", "text": "Orange means Subtract — it moves the center down."},
+				{"area": "orbit_buttons", "key": "coach.subtract.orbit", "text": "Pick the orange numbers in the right order. A too-large subtract can turn grey."}
 			],
-			"Good. But sometimes the fastest path is to make the number bigger first.",
+			"Good. Sometimes it's faster to make the number bigger first.",
 			{
 				1: {"steps": [
-					{"area": "invalid_orbit", "text": "Grey circles are unavailable now: they would push the center below 1."},
-					{"area": "op_unavailable", "text": "Grey always means: this move cannot be used in the current situation."}
+					{"area": "invalid_orbit", "key": "coach.subtract.grey", "text": "Grey circles are unavailable now — they would push the center below 1."},
+					{"area": "op_unavailable", "key": "coach.subtract.grey2", "text": "Grey always means this move can't be used right now."}
 				]}
 			}
 		),
 		tutorial_step(
 			"tutorial_multiply", "TUTORIAL: MULTIPLY", 2, [2, 3, 4], ["multiply"],
 			items([3, "multiply"], [4, "multiply"]), items([5, "multiply"]),
-			"Red orbit numbers multiply. They make the center grow fast.",
-			"Multiply can be powerful, but the order still matters.",
+			"Red numbers multiply the center.",
+			"Order still matters — choose well.",
 			[
-				{"area": "op_multiply", "text": "Red means Multiply. It can make a small number much bigger."},
-				{"area": "orbit_buttons", "text": "Use multiplication carefully: one wrong tap can overshoot the target."}
+				{"area": "op_multiply", "key": "coach.multiply.op", "text": "Red means Multiply — a small number can grow fast."},
+				{"area": "orbit_buttons", "key": "coach.multiply.orbit", "text": "Multiply carefully: one wrong tap can overshoot the target."}
 			],
 			"Great. Next: division only works when it divides evenly."
 		),
 		tutorial_step(
 			"tutorial_divide", "TUTORIAL: DIVIDE", 48, [2, 3, 4], ["divide"],
 			items([3, "divide"], [4, "divide"]), items([6, "divide"], [8, "divide"]),
-			"Blue orbit numbers divide, but only when the result is exact.",
-			"Grey division numbers cannot be used because they do not divide evenly right now.",
+			"Blue divides — only when exact.",
+			"Grey won't divide evenly right now.",
 			[
-				{"area": "op_divide", "text": "Blue means Divide. It makes the center smaller only when division is exact."},
-				{"area": "orbit_buttons", "text": "Blue numbers are available only while they divide the center exactly."}
+				{"area": "op_divide", "key": "coach.divide.op", "text": "Blue means Divide — it works only when the division is exact."},
+				{"area": "orbit_buttons", "key": "coach.divide.orbit", "text": "Blue numbers are available only while they divide the center exactly."}
 			],
 			"Perfect. One last idea: the right numbers can still fail in the wrong order.",
 			{
 				1: {"steps": [
-					{"area": "invalid_orbit", "text": "This grey division number is blocked now because it does not divide evenly."}
+					{"area": "invalid_orbit", "key": "coach.divide.grey", "text": "This blue number is grey now because it won't divide evenly."}
 				]}
 			}
 		),
 		tutorial_step(
 			"tutorial_order", "TUTORIAL: ORDER", 8, [2, 3, 4], ALL_OPS,
 			items([3, "multiply"], [6, "subtract"]), items([5, "add"], [2, "divide"]),
-			"Order matters. The same operators can lead to very different results.",
-			"Watch the center number and choose the next move with intention.",
+			"Order matters — plan each move.",
+			"Watch the center, choose wisely.",
 			[
-				{"area": "orbit_buttons", "text": "Now all four colors can appear together. The puzzle is not just what to tap, but when."}
+				{"area": "orbit_buttons", "key": "coach.order.orbit", "text": "Now all four colors can appear together. It's not just what to tap, but when."}
 			],
-			"You’re ready. Levels are now unlocked."
+			"You're ready. Levels are now unlocked."
 		)
 	]
 	for i in range(steps.size()):

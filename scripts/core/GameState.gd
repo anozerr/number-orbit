@@ -20,6 +20,8 @@ var cached_hint_move_index: int = -1
 var cached_hint_text: String = ""
 var music_volume: int = 80
 var sound_volume: int = 80
+var theme: String = "light"
+var language: String = "en"
 
 func setup(level_data: Array, load_saved: bool = true) -> void:
 	levels = level_data
@@ -35,6 +37,8 @@ func setup(level_data: Array, load_saved: bool = true) -> void:
 	cached_hint_text = ""
 	music_volume = 80
 	sound_volume = 80
+	theme = "light"
+	language = "en"
 	star_ratings.resize(levels.size())
 	for i in range(levels.size()):
 		star_ratings[i] = 0
@@ -133,7 +137,9 @@ func save_progress() -> void:
 		"hint_points": hint_points,
 		"has_played": has_played,
 		"music_volume": music_volume,
-		"sound_volume": sound_volume
+		"sound_volume": sound_volume,
+		"theme": theme,
+		"language": language
 	}
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file == null:
@@ -157,6 +163,8 @@ func load_save_v1(data: Dictionary) -> void:
 	has_played = bool(data.get("has_played", has_played))
 	music_volume = int(clamp(int(data.get("music_volume", music_volume)), 0, 100))
 	sound_volume = int(clamp(int(data.get("sound_volume", sound_volume)), 0, 100))
+	theme = "dark" if str(data.get("theme", theme)) == "dark" else "light"
+	language = str(data.get("language", language))
 	load_stars_from_ids(data.get("stars_by_level_id", {}))
 	load_tutorials_from_ids(data.get("tutorial_completed_by_id", {}))
 	recalculate_max_unlocked_level()

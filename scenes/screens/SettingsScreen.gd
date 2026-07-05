@@ -4,134 +4,335 @@ extends Control
 signal back_pressed
 signal volumes_changed(music_value: int, sound_value: int)
 signal reset_progress_requested
+signal theme_selected(theme_name: String)
+signal language_changed(language_code: String)
 
 var music_volume := 80
 var sound_volume := 80
+var current_theme := "light"
+var current_language := "en"
 var reset_popup: Control
+var language_popup: Control
 
 func _ready() -> void:
-	size = Vector2(1080, 1920)
+	set_anchors_preset(Control.PRESET_FULL_RECT)
+	get_viewport().size_changed.connect(_on_viewport_resized)
 	build()
 
-func configure(music_value: int, sound_value: int) -> void:
+func _on_viewport_resized() -> void:
+	if visible:
+		build()
+
+func configure(music_value: int, sound_value: int, theme_name: String = "light", language_code: String = "en") -> void:
 	music_volume = int(clamp(music_value, 0, 100))
 	sound_volume = int(clamp(sound_value, 0, 100))
+	current_theme = "dark" if theme_name == "dark" else "light"
+	current_language = language_code
 	build()
 
 func build() -> void:
 	for child in get_children():
 		child.queue_free()
 
-	var title := Label.new()
-	title.text = "SETTINGS"
-	title.position = Vector2(0, 95)
-	title.size = Vector2(1080, 100)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(title, UIStyles.FONT_BOLD, 44, UIStyles.TEXT)
-	add_child(title)
+	var col := Layout.content_column(self)
+	var cx := col.position.x
+	var cw := col.size.x
+	var t := Layout.content_top(self)
 
-	var back_btn := UIStyles.back_button(self)
+	# --- Header (mockup: 275-tall row, circle centered at t+74) ---
+	var back_btn := UIStyles.back_button(self, Vector2(maxf(Layout.SIDE_MARGIN, cx), t + 74.0))
 	back_btn.pressed.connect(func(): back_pressed.emit())
 
-	add_slider_block("MUSIC VOLUME", UIStyles.ICON_MUSIC, music_volume, 300, "music")
-	add_divider(250, 525)
-	add_slider_block("SOUND VOLUME", UIStyles.ICON_SPEAKER, sound_volume, 575, "sound")
-	add_divider(250, 800)
-	add_reset_progress_button()
-	build_reset_popup()
+	var title := Label.new()
+	title.text = Locale.t("settings.title", "Settings")
+	title.position = Vector2(cx, t)
+	title.size = Vector2(cw, 275)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(title, UIStyles.FONT_EXTRABOLD, 54, UIStyles.TEXT)
+	add_child(title)
 
-func add_reset_progress_button() -> void:
+	# --- Sliders card. Top matches the Levels screen's How-to card (scroll_top
+	# 236 + TOP_PAD 16 = 252) so the Back→first-block gap is identical there. ---
+	var card_h := 503.0
+	var sound_card := Panel.new()
+	sound_card.position = Vector2(cx, t + 252.0)
+	sound_card.size = Vector2(cw, card_h)
+	sound_card.add_theme_stylebox_override("panel", UIStyles.glass_panel())
+	add_child(sound_card)
+
+	add_slider_block(sound_card, Locale.t("settings.music", "Music"), UIStyles.ICON_MUSIC, music_volume, 80.0, "music")
+	var divider := ColorRect.new()
+	divider.position = Vector2(67, 250.0)
+	divider.size = Vector2(cw - 134, 3)
+	divider.color = Color(UIStyles.TEXT.r, UIStyles.TEXT.g, UIStyles.TEXT.b, 0.08)
+	sound_card.add_child(divider)
+	add_slider_block(sound_card, Locale.t("settings.sound", "Sound"), UIStyles.ICON_SPEAKER, sound_volume, 313.0, "sound")
+
+	# --- Appearance + Language tiles: 194 tall = main-menu button height. ---
+	add_section_label(cx, t + 855.0, cw, Locale.t("settings.appearance", "APPEARANCE"))
+	build_theme_toggle(cx, t + 936.0, cw)
+
+	add_section_label(cx, t + 1200.0, cw, Locale.t("settings.language", "LANGUAGE"))
+	build_language_row(cx, t + 1281.0, cw)
+
+	# --- Reset: 194 tall, its bottom on the unified bottom line (= the main-menu
+	# Settings button's bottom and the operator-chips bottom). ---
 	var reset_btn := Button.new()
-	reset_btn.text = "RESET PROGRESS"
-	reset_btn.position = Vector2(250, 905)
-	reset_btn.size = Vector2(580, 82)
-	reset_btn.add_theme_font_size_override("font_size", 26)
-	apply_danger_button_style(reset_btn)
+	reset_btn.text = Locale.t("settings.reset", "Reset Progress")
+	reset_btn.position = Vector2(cx, Layout.content_bottom_line(self) - 194.0)
+	reset_btn.size = Vector2(cw, 194.0)
+	reset_btn.add_theme_font_size_override("font_size", 50)
+	UIStyles.danger_soft_button(reset_btn)
 	reset_btn.pressed.connect(show_reset_popup)
 	add_child(reset_btn)
 
-func apply_danger_button_style(button: Button) -> void:
-	var normal := UIStyles.card(Color("#FFF1F1"), Color("#F05A5A"), 30)
-	normal.shadow_color = Color(0.35, 0.04, 0.04, 0.065)
-	normal.shadow_size = 16
-	normal.shadow_offset = Vector2(0, 8)
-	var hover := normal.duplicate() as StyleBoxFlat
-	hover.bg_color = Color("#FFEAEA")
-	var pressed := normal.duplicate() as StyleBoxFlat
-	pressed.bg_color = Color("#FFE0E0")
-	button.add_theme_stylebox_override("normal", normal)
-	button.add_theme_stylebox_override("hover", hover)
-	button.add_theme_stylebox_override("pressed", pressed)
-	UIStyles.apply_font(button, UIStyles.FONT_BOLD, int(button.get_theme_font_size("font_size")), Color("#C82424"))
-	button.add_theme_color_override("font_hover_color", Color("#C82424"))
-	button.add_theme_color_override("font_pressed_color", Color("#C82424"))
-	button.add_theme_color_override("font_focus_color", Color("#C82424"))
-	UIStyles.add_press_animation(button)
+	build_reset_popup()
+	build_language_popup()
+
+func add_section_label(x: float, y: float, w: float, text: String) -> void:
+	var label := Label.new()
+	label.text = text
+	label.position = Vector2(x + 6, y)
+	label.size = Vector2(w - 12, 60)
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(label, UIStyles.FONT_BOLD, 44, UIStyles.MUTED)
+	add_child(label)
+
+# ---------------------------------------------------------------------------
+# Appearance toggle
+# ---------------------------------------------------------------------------
+
+func build_theme_toggle(x: float, y: float, w: float) -> void:
+	var toggle_h := 194.0
+	var container := Panel.new()
+	container.position = Vector2(x, y)
+	container.size = Vector2(w, toggle_h)
+	container.add_theme_stylebox_override("panel", UIStyles.appearance_toggle_bg())
+	add_child(container)
+
+	var seg_w := (w - 39.0) * 0.5
+	_theme_segment(container, Locale.t("settings.light", "Light"), "light", 13.0, seg_w, toggle_h)
+	_theme_segment(container, Locale.t("settings.dark", "Dark"), "dark", 13.0 + seg_w + 13.0, seg_w, toggle_h)
+
+func _theme_segment(parent: Node, text: String, value: String, x: float, w: float, h: float) -> void:
+	var active := current_theme == value
+	var seg := Button.new()
+	seg.text = text
+	seg.position = Vector2(x, 13.0)
+	seg.size = Vector2(w, h - 26.0)
+	seg.add_theme_font_size_override("font_size", 47)
+	if active:
+		var seg_text_color := UIStyles.ON_ACCENT
+		if UIStyles.is_dark():
+			var style := UIStyles.gradient_style(UIStyles.PRIMARY_TOP, UIStyles.PRIMARY_BOTTOM, 67, Vector2i(int(w), int(h - 26.0)))
+			seg.add_theme_stylebox_override("normal", style)
+			seg.add_theme_stylebox_override("hover", style.duplicate())
+			seg.add_theme_stylebox_override("pressed", style.duplicate())
+		else:
+			# Light: white pill with a soft shadow (mockup), not the accent gradient.
+			var white := StyleBoxFlat.new()
+			white.bg_color = Color.WHITE
+			white.corner_radius_top_left = 67
+			white.corner_radius_top_right = 67
+			white.corner_radius_bottom_left = 67
+			white.corner_radius_bottom_right = 67
+			white.shadow_color = Color(0, 0, 0, 0.08)
+			white.shadow_size = 12
+			white.shadow_offset = Vector2(0, 5)
+			seg.add_theme_stylebox_override("normal", white)
+			seg.add_theme_stylebox_override("hover", white.duplicate())
+			seg.add_theme_stylebox_override("pressed", white.duplicate())
+			seg_text_color = UIStyles.TEXT
+		UIStyles.apply_font(seg, UIStyles.FONT_BOLD, 47, seg_text_color)
+		seg.add_theme_color_override("font_hover_color", seg_text_color)
+		seg.add_theme_color_override("font_pressed_color", seg_text_color)
+	else:
+		var flat := StyleBoxFlat.new()
+		flat.bg_color = Color(0, 0, 0, 0)
+		seg.add_theme_stylebox_override("normal", flat)
+		seg.add_theme_stylebox_override("hover", flat.duplicate())
+		seg.add_theme_stylebox_override("pressed", flat.duplicate())
+		UIStyles.apply_font(seg, UIStyles.FONT_SEMIBOLD, 47, UIStyles.MUTED)
+		seg.add_theme_color_override("font_hover_color", UIStyles.MUTED)
+		seg.add_theme_color_override("font_pressed_color", UIStyles.MUTED)
+	UIStyles.add_press_animation(seg)
+	seg.pressed.connect(func(): theme_selected.emit(value))
+	parent.add_child(seg)
+
+# ---------------------------------------------------------------------------
+# Language row + picker
+# ---------------------------------------------------------------------------
+
+func build_language_row(x: float, y: float, w: float) -> void:
+	var row_h := 194.0
+	var row := Button.new()
+	row.position = Vector2(x, y)
+	row.size = Vector2(w, row_h)
+	row.add_theme_font_size_override("font_size", 50)
+	UIStyles.menu_button(row)
+	row.pressed.connect(show_language_popup)
+	add_child(row)
+
+	var label := Label.new()
+	label.text = Locale.label_for(current_language)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.position = Vector2(67, 0)
+	label.size = Vector2(w - 160, row_h)
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(label, UIStyles.FONT_BOLD, 50, UIStyles.TEXT)
+	row.add_child(label)
+
+	var caret: Texture2D = UIStyles.load_icon(UIStyles.CARET_RIGHT_PATH)
+	if caret != null:
+		UIStyles.icon(caret, row, Vector2(w - 100, row_h * 0.5 - 24), Vector2(48, 48), UIStyles.MUTED)
+	else:
+		var chev := Label.new()
+		chev.text = "›"
+		chev.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chev.position = Vector2(w - 80, 0)
+		chev.size = Vector2(60, row_h)
+		chev.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		chev.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		UIStyles.apply_font(chev, UIStyles.FONT_BOLD, 40, UIStyles.MUTED)
+		row.add_child(chev)
+
+func build_language_popup() -> void:
+	language_popup = _make_scrim_popup()
+	var vp := Layout.viewport_size(self)
+	var pw := UIStyles.popup_width(vp.x)
+	var langs: Array = Locale.available()
+	var opt_h := 188.0
+	var opt_gap := 34.0
+	var options_top := 290.0
+	var cancel_y := options_top + float(langs.size()) * (opt_h + opt_gap) - opt_gap + 74.0
+	var ph := cancel_y + UIStyles.POPUP_SECONDARY_H + 80.0
+	var panel := Panel.new()
+	panel.position = Vector2((vp.x - pw) * 0.5, (vp.y - ph) * 0.5)
+	panel.size = Vector2(pw, ph)
+	panel.add_theme_stylebox_override("panel", UIStyles.popup_panel_style())
+	language_popup.add_child(panel)
+
+	var globe: Texture2D = UIStyles.load_icon(UIStyles.GLOBE_PATH)
+	UIStyles.popup_badge(panel, pw, UIStyles.PRIMARY_TOP, UIStyles.PRIMARY_BOTTOM, globe if globe != null else UIStyles.ICON_INFO, 94.0)
+	UIStyles.popup_title(panel, pw, Locale.t("settings.language", "LANGUAGE"))
+
+	var ry := options_top
+	for entry in langs:
+		var code := str(entry["code"])
+		var selected := code == current_language
+		var opt := Button.new()
+		opt.position = Vector2(UIStyles.POPUP_PAD, ry)
+		opt.size = Vector2(pw - UIStyles.POPUP_PAD * 2.0, opt_h)
+		var style := _language_row_style(selected)
+		opt.add_theme_stylebox_override("normal", style)
+		opt.add_theme_stylebox_override("hover", style.duplicate())
+		opt.add_theme_stylebox_override("pressed", style.duplicate())
+		UIStyles.add_press_animation(opt)
+		opt.pressed.connect(func():
+			language_popup.visible = false
+			language_changed.emit(code)
+		)
+		panel.add_child(opt)
+
+		var label := Label.new()
+		label.text = str(entry["label"])
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		label.position = Vector2(67, 0)
+		label.size = Vector2(opt.size.x - 200, opt_h)
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		UIStyles.apply_font(label, UIStyles.FONT_BOLD, 50, UIStyles.TEXT)
+		opt.add_child(label)
+
+		if selected:
+			var check_color: Color = Color("#C4B5FD") if UIStyles.is_dark() else UIStyles.PURPLE_DARK
+			UIStyles.icon(UIStyles.ICON_CHECK, opt, Vector2(opt.size.x - 127, opt_h * 0.5 - 30), Vector2(60, 60), check_color)
+		ry += opt_h + opt_gap
+
+	var cancel := UIStyles.popup_secondary_button(Locale.t("common.cancel", "Cancel"), pw, cancel_y)
+	cancel.pressed.connect(func(): language_popup.visible = false)
+	panel.add_child(cancel)
+
+func _language_row_style(selected: bool) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	if selected:
+		if UIStyles.is_dark():
+			s.bg_color = Color(0.655, 0.545, 0.980, 0.16)
+			s.border_color = Color(0.769, 0.710, 0.992, 0.40)
+		else:
+			s.bg_color = Color(0.545, 0.361, 0.965, 0.10)
+			s.border_color = Color(0.357, 0.196, 0.768, 0.30)
+	else:
+		if UIStyles.is_dark():
+			s.bg_color = Color(1, 1, 1, 0.05)
+			s.border_color = Color(1, 1, 1, 0.10)
+		else:
+			s.bg_color = Color(0.106, 0.071, 0.2, 0.04)
+			s.border_color = Color(0.106, 0.071, 0.2, 0.08)
+	s.border_width_left = 3
+	s.border_width_right = 3
+	s.border_width_top = 3
+	s.border_width_bottom = 3
+	s.corner_radius_top_left = 60
+	s.corner_radius_top_right = 60
+	s.corner_radius_bottom_left = 60
+	s.corner_radius_bottom_right = 60
+	return s
+
+func show_language_popup() -> void:
+	if language_popup != null:
+		language_popup.visible = true
+
+# ---------------------------------------------------------------------------
+# Reset popup
+# ---------------------------------------------------------------------------
+
+func _make_scrim_popup() -> Control:
+	var popup := Control.new()
+	# Explicit size: anchor presets resolve against this screen's own rect,
+	# which is not full-rect sized, so an anchored overlay collapses to zero.
+	popup.position = Vector2.ZERO
+	popup.size = Layout.viewport_size(self)
+	popup.visible = false
+	popup.z_index = 100
+	add_child(popup)
+	var overlay := ColorRect.new()
+	overlay.position = Vector2.ZERO
+	overlay.size = popup.size
+	overlay.color = Color(0.03, 0.02, 0.08, 0.55)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.gui_input.connect(func(event: InputEvent):
+		var mb := event as InputEventMouseButton
+		if mb != null and mb.pressed:
+			popup.visible = false
+	)
+	popup.add_child(overlay)
+	return popup
 
 func build_reset_popup() -> void:
-	reset_popup = Control.new()
-	reset_popup.size = Vector2(1080, 1920)
-	reset_popup.visible = false
-	reset_popup.z_index = 100
-	add_child(reset_popup)
-
-	var overlay := ColorRect.new()
-	overlay.size = Vector2(1080, 1920)
-	overlay.color = Color(0.05, 0.06, 0.10, 0.45)
-	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	reset_popup.add_child(overlay)
-
+	reset_popup = _make_scrim_popup()
+	var vp := Layout.viewport_size(self)
+	var pw := UIStyles.popup_width(vp.x)
+	var ph := 983.0
 	var panel := Panel.new()
-	panel.position = Vector2(110, 610)
-	panel.size = Vector2(860, 660)
-	panel.add_theme_stylebox_override("panel", UIStyles.soft_panel(Color.WHITE, 38))
+	panel.position = Vector2((vp.x - pw) * 0.5, (vp.y - ph) * 0.5)
+	panel.size = Vector2(pw, ph)
+	panel.add_theme_stylebox_override("panel", UIStyles.popup_panel_style())
 	reset_popup.add_child(panel)
 
-	var icon_bg := Panel.new()
-	icon_bg.position = Vector2(365, -50)
-	icon_bg.size = Vector2(130, 130)
-	icon_bg.add_theme_stylebox_override("panel", UIStyles.card(Color("#F05A5A"), Color.WHITE, 65))
-	panel.add_child(icon_bg)
-	UIStyles.icon(UIStyles.ICON_INFO, icon_bg, Vector2(38, 38), Vector2(54, 54), Color.WHITE)
+	var warn: Texture2D = UIStyles.load_icon(UIStyles.WARNING_CIRCLE_PATH)
+	UIStyles.popup_badge(panel, pw, Color("#FF9B96"), Color("#E0453F"), warn if warn != null else UIStyles.ICON_INFO, 94.0)
+	UIStyles.popup_title(panel, pw, Locale.t("settings.reset.title", "Reset Progress"))
+	UIStyles.popup_body(panel, pw, Locale.t("settings.reset.body", "This will erase your progress, stars, bulbs and unlocked levels. This cannot be undone."), 268.0)
 
-	var title := Label.new()
-	title.text = "RESET PROGRESS"
-	title.position = Vector2(0, 105)
-	title.size = Vector2(860, 60)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(title, UIStyles.FONT_BOLD, 36, UIStyles.TEXT)
-	panel.add_child(title)
-
-	var body := Label.new()
-	body.text = "Are you sure?\nThis will erase your progress, stars, bulbs and unlocked levels."
-	body.position = Vector2(80, 200)
-	body.size = Vector2(700, 130)
-	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	body.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	UIStyles.apply_font(body, UIStyles.FONT_MEDIUM, 24, UIStyles.MUTED)
-	panel.add_child(body)
-
-	var confirm_btn := Button.new()
-	confirm_btn.text = "Reset progress"
-	confirm_btn.position = Vector2(145, 405)
-	confirm_btn.size = Vector2(570, 78)
-	confirm_btn.add_theme_font_size_override("font_size", 27)
-	apply_danger_button_style(confirm_btn)
+	var confirm_btn := UIStyles.popup_primary_button(Locale.t("settings.reset.confirm", "Reset Progress"), pw, 500.0, true)
 	confirm_btn.pressed.connect(func():
 		reset_popup.visible = false
 		reset_progress_requested.emit()
 	)
 	panel.add_child(confirm_btn)
 
-	var cancel_btn := Button.new()
-	cancel_btn.text = "Cancel"
-	cancel_btn.position = Vector2(145, 515)
-	cancel_btn.size = Vector2(570, 76)
-	cancel_btn.add_theme_font_size_override("font_size", 27)
-	UIStyles.menu_button(cancel_btn)
+	var cancel_btn := UIStyles.popup_secondary_button(Locale.t("common.cancel", "Cancel"), pw, 735.0)
 	cancel_btn.pressed.connect(func(): reset_popup.visible = false)
 	panel.add_child(cancel_btn)
 
@@ -139,58 +340,65 @@ func show_reset_popup() -> void:
 	if reset_popup != null:
 		reset_popup.visible = true
 
-func add_slider_block(text: String, icon_texture: Texture2D, value: int, y: int, key: String) -> void:
-	var block_x: float = 185.0
-	var track_x: float = 115.0
-	var track_width: float = 720.0
-	UIStyles.icon(icon_texture, self, Vector2(block_x, y + 8), Vector2(42, 42), UIStyles.MUTED)
+# ---------------------------------------------------------------------------
+# Sliders
+# ---------------------------------------------------------------------------
+
+func add_slider_block(parent: Control, text: String, _icon_texture: Texture2D, value: int, y: float, key: String) -> void:
+	var pad := 67.0
+	var inner_w: float = parent.size.x - pad * 2.0
 
 	var label := Label.new()
 	label.text = text
-	label.position = Vector2(block_x + 62, y)
-	label.size = Vector2(650, 58)
+	label.position = Vector2(pad, y)
+	label.size = Vector2(inner_w - 200, 62)
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(label, UIStyles.FONT_BOLD, 28, UIStyles.TEXT)
-	add_child(label)
+	UIStyles.apply_font(label, UIStyles.FONT_BOLD, 50, UIStyles.TEXT)
+	parent.add_child(label)
 
-	var track_y: float = y + 110.0
+	var value_lbl := Label.new()
+	value_lbl.text = "%d%%" % value
+	value_lbl.position = Vector2(parent.size.x - pad - 200, y)
+	value_lbl.size = Vector2(200, 62)
+	value_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	value_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(value_lbl, UIStyles.FONT_SEMIBOLD, 50, UIStyles.MUTED)
+	parent.add_child(value_lbl)
+
+	var track_x := pad
+	var track_width := inner_w
+	var track_y := y + 102.0
+
 	var track_bg := Panel.new()
 	track_bg.position = Vector2(track_x, track_y)
-	track_bg.size = Vector2(track_width, 8)
+	track_bg.size = Vector2(track_width, 20)
 	track_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	track_bg.add_theme_stylebox_override("panel", slider_track_style(Color("#E6E4E2"), 4))
-	add_child(track_bg)
+	var track_bg_color := Color(1, 1, 1, 0.10) if UIStyles.is_dark() else Color(UIStyles.PURPLE.r, UIStyles.PURPLE.g, UIStyles.PURPLE.b, 0.15)
+	track_bg.add_theme_stylebox_override("panel", slider_track_style(track_bg_color, 10))
+	parent.add_child(track_bg)
 
 	var track_fill := Panel.new()
 	track_fill.position = Vector2(track_x, track_y)
-	track_fill.size = Vector2(track_width * float(value) / 100.0, 8)
+	track_fill.size = Vector2(track_width * float(value) / 100.0, 20)
 	track_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	track_fill.add_theme_stylebox_override("panel", slider_track_style(UIStyles.PURPLE, 4))
-	add_child(track_fill)
+	track_fill.add_theme_stylebox_override("panel", slider_track_style(UIStyles.PURPLE, 10))
+	parent.add_child(track_fill)
 
 	var knob := Panel.new()
-	knob.size = Vector2(54, 54)
-	knob.position = Vector2(track_x + track_fill.size.x - knob.size.x * 0.5, track_y - 23)
+	knob.size = Vector2(80, 80)
+	knob.position = Vector2(track_x + track_fill.size.x - knob.size.x * 0.5, track_y - 30)
 	knob.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	knob.add_theme_stylebox_override("panel", slider_knob_style())
-	add_child(knob)
+	parent.add_child(knob)
 
 	var slider := HSlider.new()
 	slider.min_value = 0
 	slider.max_value = 100
 	slider.value = value
-	slider.position = Vector2(track_x - 8, track_y - 28)
-	slider.size = Vector2(track_width + 16, 64)
+	slider.position = Vector2(track_x - 10, track_y - 30)
+	slider.size = Vector2(track_width + 20, 68)
 	slider.modulate = Color(1, 1, 1, 0)
-	add_child(slider)
-
-	var value_lbl := Label.new()
-	value_lbl.text = "%d%%" % value
-	value_lbl.position = Vector2(track_x + track_width + 48, track_y - 27)
-	value_lbl.size = Vector2(122, 60)
-	value_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(value_lbl, UIStyles.FONT_MEDIUM, 26, UIStyles.TEXT)
-	add_child(value_lbl)
+	parent.add_child(slider)
 	slider.value_changed.connect(_on_slider_value_changed.bind(value_lbl, track_fill, knob, track_width, key))
 
 func slider_track_style(color: Color, radius: int) -> StyleBoxFlat:
@@ -203,20 +411,22 @@ func slider_track_style(color: Color, radius: int) -> StyleBoxFlat:
 	return style
 
 func slider_knob_style() -> StyleBoxFlat:
+	# Mockup: 80px white knob, no border, soft purple glow (0 7px 27px @35%).
 	var style := StyleBoxFlat.new()
-	style.bg_color = UIStyles.PURPLE
-	style.border_color = Color(1, 1, 1, 0)
-	style.border_width_left = 0
-	style.border_width_right = 0
-	style.border_width_top = 0
-	style.border_width_bottom = 0
-	style.corner_radius_top_left = 27
-	style.corner_radius_top_right = 27
-	style.corner_radius_bottom_left = 27
-	style.corner_radius_bottom_right = 27
-	style.shadow_color = Color(0.35, 0.18, 0.82, 0.20)
-	style.shadow_size = 10
-	style.shadow_offset = Vector2(0, 4)
+	style.bg_color = Color.WHITE
+	style.corner_radius_top_left = 40
+	style.corner_radius_top_right = 40
+	style.corner_radius_bottom_left = 40
+	style.corner_radius_bottom_right = 40
+	# Light: purple glow (0 7px 27px @35%). Dark: soft black drop (0 7px 34px @40%).
+	if UIStyles.is_dark():
+		style.shadow_color = Color(0, 0, 0, 0.40)
+		style.shadow_size = 20
+		style.shadow_offset = Vector2(0, 6)
+	else:
+		style.shadow_color = Color(0.356, 0.196, 0.768, 0.35)
+		style.shadow_size = 16
+		style.shadow_offset = Vector2(0, 6)
 	return style
 
 func _on_slider_value_changed(value: float, value_label: Label, fill: Panel, knob: Panel, track_width: float, key: String) -> void:
@@ -229,10 +439,3 @@ func _on_slider_value_changed(value: float, value_label: Label, fill: Panel, kno
 	else:
 		sound_volume = int(round(value))
 	volumes_changed.emit(music_volume, sound_volume)
-
-func add_divider(x: int, y: int) -> void:
-	var line := ColorRect.new()
-	line.position = Vector2(x, y)
-	line.size = Vector2(580, 2)
-	line.color = Color(0.89, 0.88, 0.86, 0.7)
-	add_child(line)
