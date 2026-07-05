@@ -127,14 +127,16 @@ void fragment() {
 
 var center_label: Label
 var level_label: Label
-var goal_panel: Panel
+var level_bg: Panel
+var moves_bg: Panel
 var target_panel: Panel
+var level_hover: Panel
+var moves_hover: Panel
 var goal_label: Label
-var goal_divider: ColorRect
 var info_panel: Panel
 var info_icon: TextureRect
 var tutorial_help_label: Label
-var moves_panel: Panel
+var _status_notch_shader: Shader
 var moves_count_label: Label
 var bulbs_button: Button
 var hint_popup: Control
@@ -192,7 +194,7 @@ func _ready() -> void:
 # Responsive layout: anchors the top cluster below the safe-area, the action
 # row + legend above the home indicator, and centers the orbit in the viewport.
 func _apply_layout() -> void:
-	if goal_panel == null:
+	if level_bg == null:
 		return
 	var vp := Layout.viewport_size(self)
 	var center_x := vp.x * 0.5
@@ -208,9 +210,11 @@ func _apply_layout() -> void:
 	if settings_button != null:
 		settings_button.position = Vector2(status_x + TOP_STATUS_SIZE.x - 127.0, top + 74.0)
 
-	# Status pill (mockup top+255) + floating target centered on it.
+	# Status pill (mockup top+255) + floating target centered on it. The two halves
+	# sit side by side, meeting under the target badge.
 	var status_y := top + 255.0
-	goal_panel.position = Vector2(status_x, status_y)
+	level_bg.position = Vector2(status_x, status_y)
+	moves_bg.position = Vector2(status_x + TOP_STATUS_SIZE.x * 0.5, status_y)
 	var target_center := Vector2(center_x, status_y + TOP_STATUS_SIZE.y * 0.5)
 	target_panel.position = target_center - TARGET_BUBBLE_SIZE * 0.5
 
@@ -297,76 +301,39 @@ func build() -> void:
 	UIStyles.apply_font(center_label, UIStyles.FONT_EXTRABOLD, 101, Color.WHITE)
 	add_child(center_label)
 
-	goal_panel = Panel.new()
-	goal_panel.position = Vector2(EDGE_MARGIN, TOP_STATUS_Y)
-	goal_panel.size = TOP_STATUS_SIZE
-	goal_panel.add_theme_stylebox_override("panel", UIStyles.soft_panel(Color.WHITE, 67))
-	# Cut a circular notch where the target sits so the pill splits into a LEFT
-	# (LEVEL) and RIGHT (MOVES) half that curve around the target, with a small
-	# margin — replaces the old page-colored ring.
-	var notch_mat := ShaderMaterial.new()
-	var notch_shader := Shader.new()
-	# Punch a circular hole for the target, but finish its edge exactly like the
-	# rest of the pill: a soft inner shadow into the fill + a rim stroke hugging
-	# the hole in the same color/width as the pill's outer border. Only fragments
-	# that belong to the pill are touched, so the arcs stay where the pill wraps
-	# the target (left/right) and nothing draws past the notch top/bottom.
-	notch_shader.code = """
-shader_type canvas_item;
-uniform vec2 notch_center = vec2(536.0, 107.0);
-uniform float notch_radius = 150.0;
-uniform vec2 panel_size = vec2(1072.0, 214.0);
-uniform vec4 rim_color : source_color = vec4(0.106, 0.071, 0.2, 0.1);
-uniform float rim_width = 2.5;
-void fragment() {
-	float d = distance(UV * panel_size, notch_center);
-	// Punch the hole.
-	COLOR.a *= smoothstep(notch_radius - 1.0, notch_radius + 1.0, d);
-	// A single thin rim hugging the hole, at the SAME faint strength as the pill's
-	// own 3px border (only a slight multiplier compensates for the antialiased
-	// thin band) — no separate inner-shadow band, which read as a thick edge.
-	float rim_outer = notch_radius + rim_width;
-	float rim = smoothstep(notch_radius - 0.75, notch_radius + 0.75, d) * (1.0 - smoothstep(rim_outer - 0.75, rim_outer + 0.75, d));
-	COLOR.rgb = mix(COLOR.rgb, rim_color.rgb, rim * rim_color.a * 1.4);
-}
-"""
-	notch_mat.shader = notch_shader
-	notch_mat.set_shader_parameter("notch_center", Vector2(TOP_STATUS_SIZE.x * 0.5, TOP_STATUS_SIZE.y * 0.5))
-	notch_mat.set_shader_parameter("notch_radius", TARGET_BUBBLE_SIZE.x * 0.5 + 16.0)
-	notch_mat.set_shader_parameter("panel_size", TOP_STATUS_SIZE)
-	notch_mat.set_shader_parameter("rim_color", UIStyles.GLASS_BORDER)
-	goal_panel.material = notch_mat
-	add_child(goal_panel)
+	# The status pill is TWO independent, self-contained blocks — LEVEL (left) and
+	# MOVES (right). Each is a half-width rounded panel whose inner edge is a
+	# concave arc cut around the target (its own fill, border, shadow and rim); the
+	# two meet under the target badge, which hides the seam. Kept separate so each
+	# can highlight — and later animate — on its own.
+	var half_size := Vector2(TOP_STATUS_SIZE.x * 0.5, TOP_STATUS_SIZE.y)
+	var notch_c := TARGET_BUBBLE_SIZE.x * 0.5 + 16.0
+	var mid_y := TOP_STATUS_SIZE.y * 0.5
+	var text_w := half_size.x - notch_c
 
-	level_label = Label.new()
-	level_label.position = Vector2(67, 0)
-	level_label.size = Vector2(420, TOP_STATUS_SIZE.y)
-	level_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	level_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	level_label.mouse_filter = Control.MOUSE_FILTER_STOP
-	UIStyles.apply_font(level_label, UIStyles.FONT_BOLD, 44, UIStyles.STATUSBAR_TEXT)
-	goal_panel.add_child(level_label)
+	# LEFT (LEVEL) — notch cut on the inner (right) edge.
+	level_bg = make_status_block(Vector2(EDGE_MARGIN, TOP_STATUS_Y), half_size, Vector2(half_size.x, mid_y), notch_c)
+	add_child(level_bg)
+	level_hover = make_status_hover(half_size, Vector2(half_size.x, mid_y), notch_c)
+	level_bg.add_child(level_hover)
+	level_label = make_status_label()
+	level_label.position = Vector2(0, 0)
+	level_label.size = Vector2(text_w, TOP_STATUS_SIZE.y)
+	level_bg.add_child(level_label)
 	level_label.gui_input.connect(_on_level_panel_input)
+	UIStyles.attach_hover_tint(level_label, level_hover)
 
-	goal_divider = ColorRect.new()
-	goal_divider.visible = false
-	goal_divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	goal_panel.add_child(goal_divider)
-
-	moves_panel = Panel.new()
-	moves_panel.position = Vector2(TOP_STATUS_SIZE.x - 420.0, 0)
-	moves_panel.size = Vector2(420, TOP_STATUS_SIZE.y)
-	moves_panel.add_theme_stylebox_override("panel", empty_panel_style())
-	goal_panel.add_child(moves_panel)
-	moves_panel.gui_input.connect(_on_moves_panel_input)
-
-	moves_count_label = Label.new()
-	moves_count_label.position = Vector2(-67, 0)
-	moves_count_label.size = moves_panel.size
-	moves_count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	moves_count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(moves_count_label, UIStyles.FONT_BOLD, 44, UIStyles.STATUSBAR_TEXT)
-	moves_panel.add_child(moves_count_label)
+	# RIGHT (MOVES) — notch cut on the inner (left) edge.
+	moves_bg = make_status_block(Vector2(EDGE_MARGIN + half_size.x, TOP_STATUS_Y), half_size, Vector2(0, mid_y), notch_c)
+	add_child(moves_bg)
+	moves_hover = make_status_hover(half_size, Vector2(0, mid_y), notch_c)
+	moves_bg.add_child(moves_hover)
+	moves_count_label = make_status_label()
+	moves_count_label.position = Vector2(notch_c, 0)
+	moves_count_label.size = Vector2(text_w, TOP_STATUS_SIZE.y)
+	moves_bg.add_child(moves_count_label)
+	moves_count_label.gui_input.connect(_on_moves_panel_input)
+	UIStyles.attach_hover_tint(moves_count_label, moves_hover)
 
 	target_panel = Panel.new()
 	target_panel.position = Vector2(603, TOP_STATUS_Y + TOP_STATUS_SIZE.y * 0.5) - TARGET_BUBBLE_SIZE * 0.5
@@ -502,8 +469,7 @@ func configure(title_text: String, current_number: int, target_number: int, move
 		pop_center_number()
 		last_center_number = current_number
 	moves_count_label.text = Locale.t("game.moves", "MOVES %d") % moves
-	moves_panel.visible = true
-	goal_divider.visible = false
+	moves_count_label.visible = true
 	goal_label.size = TARGET_BUBBLE_SIZE
 	operation_legend.configure_ops(allowed_ops)
 	operation_legend.visible = true
@@ -529,7 +495,6 @@ func pulse_failure_controls() -> void:
 func _on_moves_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
 	if mouse_event != null and mouse_event.pressed:
-		pop_status_panel()
 		if current_is_tutorial:
 			show_temporary_help(Locale.t("game.tap.moves_tut", "Tutorial moves earn no stars."), false)
 		else:
@@ -538,7 +503,6 @@ func _on_moves_panel_input(event: InputEvent) -> void:
 func _on_level_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
 	if mouse_event != null and mouse_event.pressed:
-		pop_status_panel()
 		if current_is_tutorial:
 			show_temporary_help(Locale.t("game.tap.level_tut", "One step at a time."), false)
 		else:
@@ -680,17 +644,81 @@ func _play_info_marquee(text: String, temp: bool, error: bool) -> void:
 func pop_goal_panel() -> void:
 	UIStyles.pop_scale(target_panel, 1.045)
 
-func pop_status_panel() -> void:
-	UIStyles.pop_scale(goal_panel, 1.018)
+# --- Status pill (LEVEL / MOVES) building blocks ------------------------------
 
-func empty_panel_style() -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(1, 1, 1, 0)
-	style.border_width_left = 0
-	style.border_width_right = 0
-	style.border_width_top = 0
-	style.border_width_bottom = 0
-	return style
+# A half-width status block: a rounded glass panel (own fill, border, shadow)
+# with a concave notch cut around the target on its inner edge + a thin rim
+# hugging that arc. Mouse-transparent; the label inside handles input.
+func make_status_block(pos: Vector2, size: Vector2, notch_center: Vector2, notch_radius: float) -> Panel:
+	var panel := Panel.new()
+	panel.position = pos
+	panel.size = size
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_theme_stylebox_override("panel", UIStyles.soft_panel(Color.WHITE, 67))
+	panel.material = status_notch_material(notch_center, notch_radius, size, UIStyles.GLASS_BORDER)
+	return panel
+
+# The hover tint overlay for a status block: a full-size rounded panel shaped by
+# the same notch, recolored + faded in on hover (theme-aware via
+# UIStyles.fade_hover_tint) so the WHOLE block — arc included — lights up.
+func make_status_hover(size: Vector2, notch_center: Vector2, notch_radius: float) -> Panel:
+	var overlay := Panel.new()
+	overlay.position = Vector2.ZERO
+	overlay.size = size
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.modulate.a = 0.0
+	var s := StyleBoxFlat.new()
+	s.bg_color = Color(0, 0, 0)
+	s.anti_aliasing = true
+	s.corner_radius_top_left = 67
+	s.corner_radius_top_right = 67
+	s.corner_radius_bottom_left = 67
+	s.corner_radius_bottom_right = 67
+	overlay.add_theme_stylebox_override("panel", s)
+	overlay.material = status_notch_material(notch_center, notch_radius, size, Color(0, 0, 0, 0))
+	return overlay
+
+# A centered status label (LEVEL / MOVES text). It also handles taps + hover, so
+# it is mouse-STOP; the caller sets position/size.
+func make_status_label() -> Label:
+	var label := Label.new()
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.mouse_filter = Control.MOUSE_FILTER_STOP
+	UIStyles.apply_font(label, UIStyles.FONT_BOLD, 44, UIStyles.STATUSBAR_TEXT)
+	return label
+
+# Shared notch shader material: punches the circular hole (leaving the concave
+# arc around the target) at `notch_center` and strokes a thin rim in `rim_color`
+# (pass a transparent rim for the hover overlay). `panel_size` maps UV → pixels.
+func status_notch_material(notch_center: Vector2, notch_radius: float, panel_size: Vector2, rim_color: Color) -> ShaderMaterial:
+	var mat := ShaderMaterial.new()
+	mat.shader = status_notch_shader()
+	mat.set_shader_parameter("notch_center", notch_center)
+	mat.set_shader_parameter("notch_radius", notch_radius)
+	mat.set_shader_parameter("panel_size", panel_size)
+	mat.set_shader_parameter("rim_color", rim_color)
+	return mat
+
+func status_notch_shader() -> Shader:
+	if _status_notch_shader == null:
+		_status_notch_shader = Shader.new()
+		_status_notch_shader.code = """
+shader_type canvas_item;
+uniform vec2 notch_center = vec2(536.0, 107.0);
+uniform float notch_radius = 150.0;
+uniform vec2 panel_size = vec2(536.0, 214.0);
+uniform vec4 rim_color : source_color = vec4(0.0);
+uniform float rim_width = 2.5;
+void fragment() {
+	float d = distance(UV * panel_size, notch_center);
+	COLOR.a *= smoothstep(notch_radius - 1.0, notch_radius + 1.0, d);
+	float rim_outer = notch_radius + rim_width;
+	float rim = smoothstep(notch_radius - 0.75, notch_radius + 0.75, d) * (1.0 - smoothstep(rim_outer - 0.75, rim_outer + 0.75, d));
+	COLOR.rgb = mix(COLOR.rgb, rim_color.rgb, rim * rim_color.a * 1.4);
+}
+"""
+	return _status_notch_shader
 
 func set_orbit_items(items: Array) -> void:
 	var desired_ids: Dictionary = {}

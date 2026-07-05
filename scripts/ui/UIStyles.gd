@@ -455,7 +455,7 @@ static func _gradient_button(button: Button, top: Color, bottom: Color, radius: 
 	button.add_theme_color_override("font_pressed_color", ON_ACCENT)
 	button.add_theme_color_override("font_focus_color", ON_ACCENT)
 	add_embedded_shadow(button, shadow, radius, shadow_size, shadow_offset_y)
-	add_press_animation(button)
+	add_press_animation(button, radius)
 
 static func gradient_style(top: Color, bottom: Color, radius: int, texture_size: Vector2i) -> StyleBoxTexture:
 	# Radius may not exceed half the smaller side, or the 9-slice corner
@@ -635,20 +635,22 @@ static func pop_scale(control: Control, peak: float, out_duration: float = 0.10,
 	tween.tween_property(control, "scale", Vector2(peak, peak), out_duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.tween_property(control, "scale", Vector2.ONE, in_duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
-static func add_press_animation(button: Button) -> void:
+# Hover overlay opacity at full hover. Dark theme lightens (white overlay), light
+# theme darkens (black overlay) — a soft tint that reads on either surface. Kept
+# per-theme because black reads a touch heavier than white at equal opacity.
+const HOVER_LIGHTEN_ALPHA := 0.12   # dark theme: white overlay
+const HOVER_DARKEN_ALPHA := 0.07    # light theme: black overlay
+
+# Hover feedback = a soft tint overlay (darken in light theme / lighten in dark),
+# NOT a scale-up; press feedback stays a small scale-down. `highlight_radius`
+# sets the overlay corner radius for gradient-textured buttons (whose baked fill
+# has no readable StyleBoxFlat radius); StyleBoxFlat buttons auto-match theirs.
+static func add_press_animation(button: Button, highlight_radius: int = -1) -> void:
 	button.pivot_offset = button.size * 0.5
-	button.mouse_entered.connect(func() -> void:
-		if not is_instance_valid(button) or button.disabled:
-			return
-		var tween := button.create_tween()
-		tween.tween_property(button, "scale", Vector2(1.018, 1.018), 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	)
-	button.mouse_exited.connect(func() -> void:
-		if not is_instance_valid(button):
-			return
-		var tween := button.create_tween()
-		tween.tween_property(button, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	)
+	if highlight_radius >= 0:
+		button.set_meta("hover_radius", highlight_radius)
+	button.mouse_entered.connect(func() -> void: _hover_highlight(button, true))
+	button.mouse_exited.connect(func() -> void: _hover_highlight(button, false))
 	button.pressed.connect(func() -> void:
 		if not is_instance_valid(button):
 			return
@@ -656,6 +658,64 @@ static func add_press_animation(button: Button) -> void:
 		tween.tween_property(button, "scale", Vector2(0.965, 0.965), 0.055).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 		tween.tween_property(button, "scale", Vector2.ONE, 0.11).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	)
+
+static func _hover_highlight(button: Button, entering: bool) -> void:
+	if not is_instance_valid(button) or button.disabled:
+		return
+	fade_hover_tint(_ensure_hover_highlight(button), entering)
+
+# Fade a tint overlay for a hover interaction: on enter it takes the CURRENT
+# theme's tint (dark = lighten / white, light = darken / black) and fades to the
+# hover opacity; on exit it fades back out. Resolving per-hover keeps a cached
+# overlay correct after a theme switch. Reused by buttons and by bespoke hover
+# targets (e.g. the LEVEL / MOVES status halves).
+static func fade_hover_tint(overlay: Control, entering: bool) -> void:
+	if not is_instance_valid(overlay):
+		return
+	var target := 0.0
+	if entering:
+		var sb := overlay.get_theme_stylebox("panel")
+		if sb is StyleBoxFlat:
+			(sb as StyleBoxFlat).bg_color = Color(1, 1, 1) if is_dark() else Color(0, 0, 0)
+		target = HOVER_LIGHTEN_ALPHA if is_dark() else HOVER_DARKEN_ALPHA
+	var tween := overlay.create_tween()
+	tween.tween_property(overlay, "modulate:a", target, 0.16).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+# Wire hover on `source` to fade the tint `overlay` in/out — for non-button hover
+# targets. `overlay` must already be a child, shaped/positioned as desired, with a
+# StyleBoxFlat "panel" and modulate.a = 0.
+static func attach_hover_tint(source: Control, overlay: Control) -> void:
+	source.mouse_entered.connect(func() -> void: fade_hover_tint(overlay, true))
+	source.mouse_exited.connect(func() -> void: fade_hover_tint(overlay, false))
+
+# Lazily create (once) the white highlight overlay that fades in on hover. Shaped
+# to the button: matches a StyleBoxFlat button's corner radius, or a supplied
+# `hover_radius` for gradient-textured buttons, clamped to a valid rounded rect.
+static func _ensure_hover_highlight(button: Button) -> Panel:
+	var existing := button.get_node_or_null("HoverHighlight")
+	if existing is Panel:
+		return existing as Panel
+	var hl := Panel.new()
+	hl.name = "HoverHighlight"
+	hl.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hl.modulate.a = 0.0
+	var s := StyleBoxFlat.new()
+	s.bg_color = Color(1, 1, 1) if is_dark() else Color(0, 0, 0)
+	s.anti_aliasing = true
+	_set_radius(s, _hover_radius_for(button))
+	hl.add_theme_stylebox_override("panel", s)
+	button.add_child(hl)
+	return hl
+
+static func _hover_radius_for(button: Button) -> int:
+	var max_radius := int(minf(button.size.x, button.size.y) * 0.5)
+	if button.has_meta("hover_radius"):
+		return mini(int(button.get_meta("hover_radius")), max_radius)
+	var base := button.get_theme_stylebox("normal")
+	if base is StyleBoxFlat:
+		return mini(int((base as StyleBoxFlat).corner_radius_top_left), max_radius)
+	return max_radius
 
 static func add_embedded_shadow(button: Button, color: Color, radius: int = 20, shadow_size: int = 10, offset_y: int = 4) -> void:
 	var shadow := Panel.new()

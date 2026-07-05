@@ -156,7 +156,11 @@ func _theme_segment(parent: Node, text: String, value: String, x: float, w: floa
 		UIStyles.apply_font(seg, UIStyles.FONT_SEMIBOLD, 47, UIStyles.MUTED)
 		seg.add_theme_color_override("font_hover_color", UIStyles.MUTED)
 		seg.add_theme_color_override("font_pressed_color", UIStyles.MUTED)
-	UIStyles.add_press_animation(seg)
+	# Exception: the already-active theme gives no hover feedback; only the
+	# inactive segment highlights, so it reads as the tappable option. Radius 67
+	# matches the toggle pill so the highlight takes the selected-pill shape.
+	if not active:
+		UIStyles.add_press_animation(seg, 67)
 	seg.pressed.connect(func(): theme_selected.emit(value))
 	parent.add_child(seg)
 

@@ -14,10 +14,10 @@ var locked_popup_level_number: int = -1
 var last_scroll: ScrollContainer
 var content_width := 940.0
 
-# Horizontal breathing room INSIDE the scroll viewport so the hover-scale (1.018)
-# on the How-to card / edge tiles isn't clipped by the ScrollContainer's edges.
-# The visual tile grid still spans `content_width`; the scroll is just wider and
-# the grid is offset by GRID_PAD. TOP_PAD gives the first row vertical room.
+# Horizontal breathing room INSIDE the scroll viewport so edge tiles / the
+# How-to card (and their soft shadows) aren't clipped by the ScrollContainer's
+# edges. The visual tile grid still spans `content_width`; the scroll is just
+# wider and the grid is offset by GRID_PAD. TOP_PAD gives the first row room.
 const GRID_PAD := 30.0
 const TOP_PAD := 16.0
 # Length of the top/bottom dissolve. The scroll viewport extends this far BELOW
@@ -263,9 +263,11 @@ func build_level_chip(parent: Control, pos: Vector2, chip_size: Vector2, global_
 	btn.text = ""
 	btn.size = chip_size
 	btn.position = pos
-	UIStyles.add_press_animation(btn)
 	style_level_chip(btn, completed, unlocked, diff_color)
 	if unlocked:
+		# Exception: locked levels give no hover/press feedback (they only open the
+		# unlock popup on tap), so the highlight is attached to unlocked chips only.
+		UIStyles.add_press_animation(btn)
 		btn.pressed.connect(_on_level_button_pressed.bind(global_level))
 	else:
 		var can_watch_ad := tutorials_done and global_level == max_unlocked_level + 1

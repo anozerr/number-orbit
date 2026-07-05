@@ -16,6 +16,7 @@ var orbit_input_locked: bool = false
 var shown_tutorial_coaches: Dictionary = {}
 
 var bg: ThemeBackground
+var theme_crossfade: TextureRect
 var current_screen: String = "menu"
 var main_menu: MainMenuScreen
 var level_select: LevelSelectScreen
@@ -117,10 +118,47 @@ func show_game() -> void:
 func _on_theme_changed(theme_name: String) -> void:
 	if state.theme == theme_name:
 		return
+	# Freeze the current (old-theme) frame into an overlay, swap the theme + rebuild
+	# underneath it, then fade the overlay out. The whole screen — background and
+	# every foreground color — dissolves light<->dark in one smooth crossfade
+	# instead of a hard cut (per the motion handoff's theme-switch spec).
+	var snapshot := capture_theme_snapshot()
 	state.theme = theme_name
 	state.save_progress()
 	UIStyles.set_theme(theme_name)
 	rebuild_all()
+	if snapshot != null:
+		var tween := snapshot.create_tween()
+		tween.tween_property(snapshot, "modulate:a", 0.0, 0.55).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		tween.tween_callback(snapshot.queue_free)
+
+# Snapshot the currently rendered frame into a full-screen overlay used for the
+# theme crossfade. It sits above everything and (while it fades) swallows input,
+# so the rebuild underneath can't be tapped mid-transition. Returns null if the
+# frame can't be read (e.g. headless) — the theme then just applies instantly.
+func capture_theme_snapshot() -> TextureRect:
+	var vp := get_viewport()
+	if vp == null:
+		return null
+	var vp_tex := vp.get_texture()
+	if vp_tex == null:
+		return null
+	var img := vp_tex.get_image()
+	if img == null or img.is_empty():
+		return null
+	if theme_crossfade != null and is_instance_valid(theme_crossfade):
+		theme_crossfade.queue_free()
+	var snap := TextureRect.new()
+	snap.texture = ImageTexture.create_from_image(img)
+	snap.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	snap.stretch_mode = TextureRect.STRETCH_SCALE
+	snap.position = Vector2.ZERO
+	snap.size = Layout.viewport_size(self)
+	snap.z_index = 500
+	snap.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(snap)
+	theme_crossfade = snap
+	return snap
 
 func _on_language_changed(language_code: String) -> void:
 	if state.language == language_code:
