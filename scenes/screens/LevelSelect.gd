@@ -1,6 +1,8 @@
 class_name LevelSelectScreen
 extends Control
 
+const PopupFactoryScript = preload("res://scripts/ui/PopupFactory.gd")
+
 signal back_pressed
 signal settings_pressed
 signal level_selected(level_number: int)
@@ -15,9 +17,9 @@ var last_scroll: ScrollContainer
 var content_width := 940.0
 
 # Horizontal breathing room INSIDE the scroll viewport so edge tiles / the
-# How-to card (and their soft shadows) aren't clipped by the ScrollContainer's
-# edges. The visual tile grid still spans `content_width`; the scroll is just
-# wider and the grid is offset by GRID_PAD. TOP_PAD gives the first row room.
+# How-to card aren't clipped by the ScrollContainer's edges. The visual tile
+# grid still spans `content_width`; the scroll is just wider and the grid is
+# offset by GRID_PAD. TOP_PAD gives the first row room.
 const GRID_PAD := 30.0
 const TOP_PAD := 16.0
 # Length of the top/bottom dissolve. The scroll viewport extends this far BELOW
@@ -182,12 +184,13 @@ func add_tutorials_section(parent: Control, y: float, tutorial_completed: Array)
 	parent.add_child(btn)
 
 	# Circular gradient icon badge.
-	var badge := Panel.new()
+	var badge := TextureRect.new()
 	badge.size = Vector2(147, 147)
 	badge.position = Vector2(67, (row_h - 147) * 0.5)
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	badge.add_theme_stylebox_override("panel", UIStyles.card(UIStyles.PURPLE, UIStyles.RING, 74))
+	badge.texture = UIStyles.circle_gradient_texture(147, UIStyles.PRIMARY_TOP, UIStyles.PRIMARY_BOTTOM)
 	btn.add_child(badge)
+
 	# Always the lightbulb (matches the mockup), regardless of tutorial completion.
 	var icon_texture: Texture2D = UIStyles.ICON_BULB
 	UIStyles.icon(icon_texture, badge, Vector2(37, 37), Vector2(74, 74), Color.WHITE)
@@ -251,8 +254,8 @@ func add_difficulty_section(parent: Control, difficulty_index: int, y: float, st
 	var rows := int(ceil(float(LevelData.LEVELS_PER_DIFFICULTY) / 3.0))
 	return start_y + float(rows) * row_gap - (row_gap - chip)
 
-# Shared chip grid metrics (inset by GRID_PAD so card shadows aren't clipped by
-# the scroll container at the left/right edges).
+# Shared chip grid metrics (inset by GRID_PAD so chips aren't clipped by the
+# scroll container at the left/right edges).
 func chip_metrics() -> Dictionary:
 	var gutter := 53.0
 	var chip := (content_width - gutter * 2.0) / 3.0
@@ -315,9 +318,6 @@ func style_level_chip(button: Button, completed: bool, unlocked: bool, diff_colo
 	else:
 		normal = UIStyles.glass_panel()
 		button.modulate = Color.WHITE
-	# Level tiles are flat in the mockup (both themes) — drop any panel shadow.
-	normal.shadow_size = 0
-	normal.shadow_color = Color(0, 0, 0, 0)
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", normal.duplicate())
 	button.add_theme_stylebox_override("pressed", normal.duplicate())
@@ -393,37 +393,28 @@ func build_locked_level_popup() -> void:
 	locked_popup.visible = false
 	add_child(locked_popup)
 
-	var overlay := ColorRect.new()
-	overlay.position = Vector2.ZERO
-	overlay.size = locked_popup.size
-	overlay.color = Color(0.03, 0.02, 0.08, 0.55)
-	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	overlay.gui_input.connect(func(event: InputEvent):
-		var mb := event as InputEventMouseButton
-		if mb != null and mb.pressed:
-			hide_locked_level_popup()
-	)
+	var overlay := PopupFactoryScript.scrim(locked_popup.size, func() -> void: hide_locked_level_popup())
 	locked_popup.add_child(overlay)
 
 	var vp := Layout.viewport_size(self)
-	var pw := UIStyles.popup_width(vp.x)
+	var pw := PopupFactoryScript.popup_width(vp.x)
 	var ph := 983.0
 	var panel := Panel.new()
 	panel.position = Vector2((vp.x - pw) * 0.5, (vp.y - ph) * 0.5)
 	panel.size = Vector2(pw, ph)
-	panel.add_theme_stylebox_override("panel", UIStyles.popup_panel_style())
+	PopupFactoryScript.apply_panel_glass(panel)
 	locked_popup.add_child(panel)
 
-	UIStyles.popup_badge(panel, pw, Color("#B79CFF"), Color("#5B32C4"), UIStyles.ICON_LOCK, 87.0)
-	UIStyles.popup_title(panel, pw, Locale.t("levels.locked.title", "Locked Level"))
+	PopupFactoryScript.badge(panel, pw, Color("#B79CFF"), Color("#5B32C4"), UIStyles.ICON_LOCK, 87.0)
+	PopupFactoryScript.title(panel, pw, Locale.t("levels.locked.title", "Locked Level"))
 
-	locked_popup_body = UIStyles.popup_body(panel, pw, "", 268.0)
+	locked_popup_body = PopupFactoryScript.body(panel, pw, "", 268.0)
 
-	locked_popup_ad_button = UIStyles.popup_primary_button(Locale.t("levels.locked.watch_ad", "Watch Ad"), pw, 500.0)
+	locked_popup_ad_button = PopupFactoryScript.primary_button(Locale.t("levels.locked.watch_ad", "Watch Ad"), pw, 500.0)
 	locked_popup_ad_button.pressed.connect(func(): unlock_with_ad_requested.emit(locked_popup_level_number))
 	panel.add_child(locked_popup_ad_button)
 
-	locked_popup_close_button = UIStyles.popup_secondary_button(Locale.t("common.cancel", "Cancel"), pw, 735.0)
+	locked_popup_close_button = PopupFactoryScript.secondary_button(Locale.t("common.cancel", "Cancel"), pw, 735.0)
 	locked_popup_close_button.pressed.connect(hide_locked_level_popup)
 	panel.add_child(locked_popup_close_button)
 

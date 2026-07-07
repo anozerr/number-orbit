@@ -5,6 +5,8 @@ const LevelSelectScene = preload("res://scenes/screens/LevelSelect.tscn")
 const SettingsScene = preload("res://scenes/screens/SettingsScreen.tscn")
 const GameScreenScene = preload("res://scenes/screens/GameScreen.tscn")
 const CompletePopupScene = preload("res://scenes/ui/LevelCompletePopup.tscn")
+const OrbitSlotsScript = preload("res://scripts/game/OrbitSlots.gd")
+const HintSolverScript = preload("res://scripts/game/HintSolver.gd")
 
 var state: GameState = GameState.new()
 var orbit_items: Array = []
@@ -272,7 +274,7 @@ func _on_game_back_pressed() -> void:
 func load_level(level_number: int) -> void:
 	tutorial_mode = false
 	var data: Dictionary = state.load_level(level_number)
-	orbit_items = assign_orbit_slots(OrbitGenerator.initial_items(data, state.current_number))
+	orbit_items = OrbitSlotsScript.assign(OrbitGenerator.initial_items(data, state.current_number))
 	if game_screen != null:
 		game_screen.clear_hint_cache()
 		game_screen.clear_orbit_buttons()
@@ -288,7 +290,7 @@ func load_tutorial_level(index: int, reset_coach_memory: bool = true) -> void:
 	state.moves_used = 0
 	state.is_level_failed = false
 	state.clear_cached_hint()
-	orbit_items = assign_orbit_slots(OrbitGenerator.initial_items(data, state.current_number))
+	orbit_items = OrbitSlotsScript.assign(OrbitGenerator.initial_items(data, state.current_number))
 	if game_screen != null:
 		game_screen.clear_hint_cache()
 		game_screen.clear_orbit_buttons()
@@ -304,123 +306,6 @@ func clear_tutorial_coach_memory(tutorial_id: String) -> void:
 	for key in shown_tutorial_coaches.keys():
 		if str(key).begins_with(prefix):
 			shown_tutorial_coaches.erase(key)
-
-func assign_orbit_slots(items: Array) -> Array:
-	var result: Array = []
-	var slots: Array = spread_slot_order(items.size())
-	for i in range(items.size()):
-		var item: Dictionary = (items[i] as Dictionary).duplicate()
-		item["id"] = "orbit_%d" % i
-		item["slot"] = int(slots[i])
-		item["slot_count"] = items.size()
-		result.append(item)
-	return result
-
-func spread_slot_order(count: int) -> Array:
-	match count:
-		1:
-			return [0]
-		2:
-			return [0, 1]
-		3:
-			return [0, 2, 1]
-		4:
-			return [0, 2, 1, 3]
-		5:
-			return [0, 2, 4, 1, 3]
-		6:
-			return [0, 3, 1, 4, 2, 5]
-		7:
-			return [0, 3, 6, 2, 5, 1, 4]
-		8:
-			return [0, 4, 1, 5, 2, 6, 3, 7]
-		9:
-			return [0, 4, 8, 3, 7, 2, 6, 1, 5]
-		10:
-			return [0, 5, 1, 6, 2, 7, 3, 8, 4, 9]
-	var result: Array = []
-	var step: int = int(max(1, floor(float(count) * 0.5)))
-	var used: Dictionary = {}
-	var slot := 0
-	while result.size() < count:
-		if not used.has(slot):
-			result.append(slot)
-			used[slot] = true
-		slot = (slot + step) % count
-		if used.has(slot):
-			for candidate in range(count):
-				if not used.has(candidate):
-					slot = candidate
-					break
-	return result
-
-func reflow_orbit_slots(removed_slot: int = -1, old_slot_count: int = 0, removed_angle_override: float = INF) -> void:
-	if orbit_items.is_empty():
-		return
-	var new_count: int = orbit_items.size()
-	if old_slot_count <= 0:
-		old_slot_count = new_count + 1
-	if removed_slot < 0:
-		var slots: Array = spread_slot_order(new_count)
-		for i in range(new_count):
-			var item: Dictionary = (orbit_items[i] as Dictionary).duplicate()
-			item["slot"] = int(slots[i])
-			item["slot_count"] = new_count
-			item.erase("orbit_target_angle")
-			item.erase("orbit_snap_to_target")
-			item.erase("orbit_force_clockwise")
-			orbit_items[i] = item
-		return
-
-	var removed_angle: float = removed_angle_override
-	if is_inf(removed_angle):
-		removed_angle = orbit_angle_for_slot(removed_slot, old_slot_count)
-	var anchor_index := 0
-	var best_distance := INF
-	for i in range(new_count):
-		var candidate: Dictionary = orbit_items[i] as Dictionary
-		var candidate_slot: int = int(candidate.get("slot", i))
-		var candidate_angle: float = float(candidate.get("orbit_target_angle", orbit_angle_for_slot(candidate_slot, old_slot_count)))
-		var distance: float = fposmod(candidate_angle - removed_angle, TAU)
-		if distance < 0.001:
-			distance = TAU
-		if distance < best_distance:
-			best_distance = distance
-			anchor_index = i
-
-	var anchor: Dictionary = orbit_items[anchor_index] as Dictionary
-	var anchor_old_slot: int = int(anchor.get("slot", 0))
-	var anchor_angle: float = float(anchor.get("orbit_target_angle", orbit_angle_for_slot(anchor_old_slot, old_slot_count)))
-	var order: Array = []
-	for i in range(new_count):
-		var item: Dictionary = orbit_items[i] as Dictionary
-		var old_slot: int = int(item.get("slot", i))
-		var old_angle: float = float(item.get("orbit_target_angle", orbit_angle_for_slot(old_slot, old_slot_count)))
-		var clockwise_distance: float = fposmod(old_angle - anchor_angle, TAU)
-		order.append({"index": i, "distance": clockwise_distance, "old_slot": old_slot, "old_angle": old_angle})
-	order.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return float(a["distance"]) < float(b["distance"])
-	)
-
-	for rank in range(order.size()):
-		var info: Dictionary = order[rank] as Dictionary
-		var i: int = int(info["index"])
-		var old_angle: float = float(info["old_angle"])
-		var target_angle: float = anchor_angle + (TAU * float(rank) / float(new_count))
-		while target_angle < old_angle - 0.001:
-			target_angle += TAU
-		if target_angle - old_angle > PI:
-			target_angle -= TAU
-		var item: Dictionary = (orbit_items[i] as Dictionary).duplicate()
-		item["slot"] = rank
-		item["slot_count"] = new_count
-		item["orbit_target_angle"] = target_angle
-		item["orbit_force_clockwise"] = true
-		item["orbit_snap_to_target"] = rank == 0
-		orbit_items[i] = item
-
-func orbit_angle_for_slot(slot: int, slot_count: int) -> float:
-	return TAU * float(slot) / float(max(1, slot_count)) - PI / 2.0
 
 func restart_level() -> void:
 	if tutorial_mode:
@@ -524,9 +409,9 @@ func remove_orbit_item(value: int, op: String, item_id: String) -> void:
 		if str(item.get("id", "")) == item_id or (int(item["value"]) == value and str(item["op"]) == op):
 			var removed_slot: int = int(item.get("slot", i))
 			var old_slot_count: int = int(item.get("slot_count", orbit_items.size()))
-			var removed_angle: float = float(item.get("orbit_target_angle", orbit_angle_for_slot(removed_slot, old_slot_count)))
+			var removed_angle: float = float(item.get("orbit_target_angle", OrbitSlotsScript.angle_for_slot(removed_slot, old_slot_count)))
 			orbit_items.remove_at(i)
-			reflow_orbit_slots(removed_slot, old_slot_count, removed_angle)
+			orbit_items = OrbitSlotsScript.reflow(orbit_items, removed_slot, old_slot_count, removed_angle)
 			return
 
 func orbit_item_exists(item_id: String) -> bool:
@@ -550,7 +435,7 @@ func _on_hint_requested() -> void:
 		game_screen.show_hint_result(state.cached_hint_text, state.hint_points)
 		return
 
-	var hint_text: String = next_hint_text()
+	var hint_text: String = HintSolverScript.next_hint_text(state.current_number, state.target_number, state.moves_used, orbit_items, active_level_data())
 	# Success always carries the internal "Next move:" marker; its absence means
 	# no winning path was found (language-independent).
 	if not hint_text.contains("Next move:"):
@@ -572,70 +457,6 @@ func _on_hint_ad_requested() -> void:
 	state.hint_points += GameState.HINT_COST
 	state.save_progress()
 	_on_hint_requested()
-
-func next_hint_text() -> String:
-	var data: Dictionary = active_level_data()
-	var max_depth: int = orbit_items.size()
-	if str(data.get("difficulty", "")) != "Easy":
-		var thresholds: Array = StarCalculator.sorted_thresholds(data)
-		var one_star_budget: int = int(thresholds[thresholds.size() - 1]) - state.moves_used
-		max_depth = min(orbit_items.size(), max(0, one_star_budget))
-	var path: Array = find_hint_path(state.current_number, state.target_number, max_depth)
-	if path.is_empty():
-		return Locale.t("hint.none", "No winning move from here. Try Restart.")
-	var item: Dictionary = path[0] as Dictionary
-	var op: String = str(item["op"])
-	var value: int = int(item["value"])
-	# "Next move:" is an internal parse marker (never shown); the to-win line is
-	# the only visible part, so it is localized.
-	return "%s\nNext move: %s %d" % [Locale.t("hint.to_win", "To win: %d move(s) left.") % path.size(), OperationLogic.symbol(op), value]
-
-func find_hint_path(current_number: int, target_number: int, depth: int) -> Array:
-	var visited: Dictionary = {}
-	for search_depth in range(1, depth + 1):
-		visited.clear()
-		var path := search_hint_path(current_number, target_number, orbit_items.duplicate(), search_depth, visited)
-		if not path.is_empty():
-			return path
-	return []
-
-func search_hint_path(current_number: int, target_number: int, remaining_items: Array, depth: int, visited: Dictionary) -> Array:
-	if depth <= 0:
-		return []
-
-	for i in range(remaining_items.size()):
-		var raw_item = remaining_items[i]
-		var item: Dictionary = raw_item as Dictionary
-		var op: String = str(item["op"])
-		var value: int = int(item["value"])
-		if not OperationLogic.can_apply(current_number, value, op):
-			continue
-
-		var next_number: int = OperationLogic.apply(current_number, value, op)
-		if next_number == target_number:
-			return [item]
-
-		var next_remaining: Array = remaining_items.duplicate()
-		next_remaining.remove_at(i)
-		var key: String = "%d:%d:%s" % [depth - 1, next_number, items_key(next_remaining)]
-		if visited.has(key):
-			continue
-		visited[key] = true
-
-		var tail: Array = search_hint_path(next_number, target_number, next_remaining, depth - 1, visited)
-		if not tail.is_empty():
-			var result: Array = [item]
-			result.append_array(tail)
-			return result
-
-	return []
-
-func items_key(items_to_key: Array) -> String:
-	var parts: Array[String] = []
-	for raw_item in items_to_key:
-		var item: Dictionary = raw_item as Dictionary
-		parts.append("%s%d" % [str(item["op"]).substr(0, 1), int(item["value"])])
-	return ",".join(parts)
 
 func active_level_data() -> Dictionary:
 	return tutorial_levels[tutorial_index] if tutorial_mode else state.current_level_data()

@@ -1,6 +1,8 @@
 class_name LevelCompletePopup
 extends Control
 
+const PopupFactoryScript = preload("res://scripts/ui/PopupFactory.gd")
+
 signal next_pressed
 signal levels_pressed
 
@@ -32,25 +34,21 @@ func build() -> void:
 	var vp := Layout.viewport_size(self)
 	size = vp
 
-	var overlay := ColorRect.new()
-	overlay.position = Vector2.ZERO
-	overlay.size = vp
-	overlay.color = Color(0.03, 0.02, 0.08, 0.58)
-	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	var overlay := PopupFactoryScript.scrim(vp)
 	add_child(overlay)
-	panel_width = UIStyles.popup_width(vp.x)
+	panel_width = PopupFactoryScript.popup_width(vp.x)
 	var pw := panel_width
 	var ph := panel_height
 
 	panel = Panel.new()
 	panel.position = Vector2((vp.x - pw) * 0.5, (vp.y - ph) * 0.5)
 	panel.size = Vector2(pw, ph)
-	panel.add_theme_stylebox_override("panel", UIStyles.popup_panel_style())
+	PopupFactoryScript.apply_panel_glass(panel)
 	add_child(panel)
 
-	badge_circle = UIStyles.popup_badge(panel, pw, Color("#7FE3D2"), Color("#2FB6A8"), UIStyles.ICON_CHECK, 94.0)
+	badge_circle = PopupFactoryScript.badge(panel, pw, Color("#7FE3D2"), Color("#2FB6A8"), UIStyles.ICON_CHECK, 94.0)
 
-	title_label = UIStyles.popup_title(panel, pw, "")
+	title_label = PopupFactoryScript.title(panel, pw, "")
 
 	stars_label = Control.new()
 	stars_label.position = Vector2(0, 268)
@@ -74,11 +72,11 @@ func build() -> void:
 	UIStyles.apply_font(reward_label, UIStyles.FONT_SEMIBOLD, 40, UIStyles.MUTED)
 	panel.add_child(reward_label)
 
-	next_button = UIStyles.popup_primary_button("", pw, 560.0)
+	next_button = PopupFactoryScript.primary_button("", pw, 560.0)
 	next_button.pressed.connect(func(): next_pressed.emit())
 	panel.add_child(next_button)
 
-	levels_button = UIStyles.popup_secondary_button(Locale.t("complete.back", "Back to Levels"), pw, 795.0)
+	levels_button = PopupFactoryScript.secondary_button(Locale.t("complete.back", "Back to Levels"), pw, 795.0)
 	levels_button.pressed.connect(func(): levels_pressed.emit())
 	panel.add_child(levels_button)
 

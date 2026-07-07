@@ -29,17 +29,12 @@ const ONEST_800: FontFile = preload("res://assets/fonts/onest/onest-cyrillic-800
 # --- Icons (theme-independent; recolored at use site via modulate) ---
 const ICON_BACK: Texture2D = preload("res://assets/images/icons/arrow-left.svg")
 const ICON_CHECK: Texture2D = preload("res://assets/images/icons/check.svg")
-const ICON_DIVIDE: Texture2D = preload("res://assets/images/icons/divide.svg")
 const ICON_LEVELS: Texture2D = preload("res://assets/images/icons/dots-nine.svg")
 const ICON_GEAR: Texture2D = preload("res://assets/images/icons/gear.svg")
 const ICON_INFO: Texture2D = preload("res://assets/images/icons/info.svg")
 const ICON_BULB: Texture2D = preload("res://assets/images/icons/lightbulb.svg")
 const ICON_LOCK: Texture2D = preload("res://assets/images/icons/lock.svg")
-const ICON_MINUS: Texture2D = preload("res://assets/images/icons/minus.svg")
 const ICON_MUSIC: Texture2D = preload("res://assets/images/icons/music-notes.svg")
-const ICON_PLAY_WHITE: Texture2D = preload("res://assets/images/icons/play-white.svg")
-const ICON_PLUS: Texture2D = preload("res://assets/images/icons/plus.svg")
-const ICON_RESTART: Texture2D = preload("res://assets/images/icons/arrow-counter-clockwise.svg")
 const ICON_SPEAKER: Texture2D = preload("res://assets/images/icons/speaker-high.svg")
 const ICON_STAR: Texture2D = preload("res://assets/images/icons/star-fill.svg")
 const ICON_STAR_EMPTY: Texture2D = preload("res://assets/images/icons/star-empty-white.svg")
@@ -90,9 +85,6 @@ static var TARGET_TEXT: Color
 static var RING: Color
 static var ORBIT_RING: Color
 static var ON_ACCENT: Color
-static var SHADOW_CARD: Color
-static var SHADOW_POPUP: Color
-static var SHADOW_PRIMARY: Color
 
 static var _theme_name: String = "light"
 static var _rounded_gradient_cache: Dictionary = {}
@@ -164,9 +156,6 @@ static func set_theme(name: String) -> void:
 	RING = t["ring"]
 	ORBIT_RING = t["orbit_ring"]
 	ON_ACCENT = t["on_accent"]
-	SHADOW_CARD = t["shadow_card"]
-	SHADOW_POPUP = t["shadow_popup"]
-	SHADOW_PRIMARY = t["shadow_primary"]
 
 static func is_dark() -> bool:
 	return _theme_name == "dark"
@@ -181,7 +170,7 @@ static func _light_palette() -> Dictionary:
 		"statusbar_text": Color("#5A5175"),
 		"glass_bg": Color(1, 1, 1, 0.82),
 		"glass_border": Color(0.106, 0.071, 0.2, 0.10),
-		"glass_popup_bg": Color(1, 1, 1, 0.90),
+		"glass_popup_bg": Color(1, 1, 1, 1.0),
 		"glass_popup_border": Color(0.106, 0.071, 0.2, 0.09),
 		"locked_bg": Color(1, 1, 1, 0.60),
 		"locked_border": Color(0.106, 0.071, 0.2, 0.08),
@@ -201,12 +190,6 @@ static func _light_palette() -> Dictionary:
 		"ring": Color("#FBF9FF"),
 		"orbit_ring": Color(0.545, 0.361, 0.965, 0.25),
 		"on_accent": Color.WHITE,
-		# Mockup glass panels are flat (backdrop blur, no drop shadow). Godot has no
-		# backdrop blur, so keep only a whisper of lift to separate panels from the
-		# gradient bg instead of the old heavy floating-card shadow.
-		"shadow_card": Color(0.117, 0.039, 0.274, 0.06),
-		"shadow_popup": Color(0.117, 0.039, 0.274, 0.16),
-		"shadow_primary": Color(0.356, 0.196, 0.768, 0.18),
 	}
 
 static func _dark_palette() -> Dictionary:
@@ -219,10 +202,7 @@ static func _dark_palette() -> Dictionary:
 		"statusbar_text": Color("#A79CC7"),
 		"glass_bg": Color(1, 1, 1, 0.07),
 		"glass_border": Color(1, 1, 1, 0.14),
-		# Popups/elevated cards sit over busy content and Godot has no backdrop
-		# blur, so the dark popup surface must be a near-opaque elevated tone —
-		# an 8% white fill let the game orbit bleed straight through the card.
-		"glass_popup_bg": Color(0.118, 0.094, 0.216, 0.98),
+		"glass_popup_bg": Color(0.118, 0.094, 0.216, 1.0),
 		"glass_popup_border": Color(1, 1, 1, 0.16),
 		"locked_bg": Color(1, 1, 1, 0.04),
 		"locked_border": Color(1, 1, 1, 0.08),
@@ -242,11 +222,6 @@ static func _dark_palette() -> Dictionary:
 		"ring": Color(0.078, 0.055, 0.149, 0.45),
 		"orbit_ring": Color(0.655, 0.545, 0.980, 0.28),
 		"on_accent": Color.WHITE,
-		# Whisper of grounding only — dark mockup panels are flat (fill+border
-		# separate them); black-on-dark shadow is near-invisible by design.
-		"shadow_card": Color(0, 0, 0, 0.22),
-		"shadow_popup": Color(0, 0, 0, 0.32),
-		"shadow_primary": Color(0.486, 0.227, 0.929, 0.22),
 	}
 
 # ============================================================================
@@ -298,14 +273,6 @@ static func operation_text(op: String) -> Color:
 		"divide": return Color("#1B4F7A")
 	return Color("#8A8494")
 
-static func operation_icon(op: String) -> Texture2D:
-	match op:
-		"divide": return ICON_DIVIDE
-		"multiply": return ICON_X
-		"add": return ICON_PLUS
-		"subtract": return ICON_MINUS
-	return ICON_PLUS
-
 # Fill color of an operator's chip/plate (shared by the legend chips and the
 # orbit satellites so a satellite matches its operator's plate).
 static func operation_plate(op: String) -> Color:
@@ -342,15 +309,6 @@ static func glass_panel(radius: int = CORNER, heavy: bool = false) -> StyleBoxFl
 	style.border_color = GLASS_POPUP_BORDER if heavy else GLASS_BORDER
 	_set_border(style, 3)
 	_set_radius(style, radius)
-	style.shadow_color = SHADOW_POPUP if heavy else SHADOW_CARD
-	if heavy:
-		# Popups float over a dark scrim, so a real drop shadow reads as elevation.
-		style.shadow_size = 26
-		style.shadow_offset = Vector2(0, 12)
-	else:
-		# Both mockup themes draw glass panels near-flat; only a soft low lift.
-		style.shadow_size = 10
-		style.shadow_offset = Vector2(0, 4)
 	return style
 
 static func locked_panel(radius: int = CORNER) -> StyleBoxFlat:
@@ -359,8 +317,6 @@ static func locked_panel(radius: int = CORNER) -> StyleBoxFlat:
 	style.border_color = LOCKED_BORDER
 	_set_border(style, 3)
 	_set_radius(style, radius)
-	style.shadow_color = Color(0, 0, 0, 0.02)
-	style.shadow_size = 6
 	return style
 
 # Generic filled card (used for colored bubbles / chips with explicit colors).
@@ -370,9 +326,6 @@ static func card(bg: Color = Color.WHITE, border: Color = Color.TRANSPARENT, rad
 	style.border_color = border if border.a > 0.0 else GLASS_BORDER
 	_set_border(style, 3)
 	_set_radius(style, radius)
-	# Filled bubbles/badges/chips are flat in the mockup (both themes).
-	style.shadow_color = Color(0, 0, 0, 0)
-	style.shadow_size = 0
 	return style
 
 # Back-compat alias — old call sites used soft_panel(); now maps to glass.
@@ -404,6 +357,9 @@ static func _set_radius(style: StyleBoxFlat, radius: int) -> void:
 	style.corner_radius_top_right = radius
 	style.corner_radius_bottom_left = radius
 	style.corner_radius_bottom_right = radius
+	style.corner_detail = 48
+	style.anti_aliasing = true
+	style.anti_aliasing_size = 1.0
 
 static func apply_font(control: Control, font: Font = null, size: int = 28, color: Color = Color.TRANSPARENT) -> void:
 	control.add_theme_font_override("font", font if font != null else FONT_SEMIBOLD)
@@ -428,14 +384,12 @@ static func menu_button(button: Button, radius: int = CORNER) -> void:
 	add_press_animation(button)
 
 static func primary_button(button: Button, radius: int = CORNER) -> void:
-	# Same whisper shadow as the glass menu buttons (Levels/Settings), not a
-	# colored glow — per design review the primary button should match them.
-	_gradient_button(button, PRIMARY_TOP, PRIMARY_BOTTOM, radius, SHADOW_CARD)
+	_gradient_button(button, PRIMARY_TOP, PRIMARY_BOTTOM, radius)
 
 static func danger_button(button: Button, radius: int = CORNER) -> void:
-	_gradient_button(button, DANGER_TOP, DANGER_BOTTOM, radius, Color(DANGER_BOTTOM.r, DANGER_BOTTOM.g, DANGER_BOTTOM.b, 0.28))
+	_gradient_button(button, DANGER_TOP, DANGER_BOTTOM, radius)
 
-static func _gradient_button(button: Button, top: Color, bottom: Color, radius: int, shadow: Color, shadow_size: int = 10, shadow_offset_y: int = 4) -> void:
+static func _gradient_button(button: Button, top: Color, bottom: Color, radius: int) -> void:
 	# Bake the gradient at the button's REAL size (9-slicing a fixed-size bake
 	# breaks once corner margins exceed the button: corners overlap and the
 	# button renders as an inflated pill bleeding over its neighbors).
@@ -454,7 +408,6 @@ static func _gradient_button(button: Button, top: Color, bottom: Color, radius: 
 	button.add_theme_color_override("font_hover_color", ON_ACCENT)
 	button.add_theme_color_override("font_pressed_color", ON_ACCENT)
 	button.add_theme_color_override("font_focus_color", ON_ACCENT)
-	add_embedded_shadow(button, shadow, radius, shadow_size, shadow_offset_y)
 	add_press_animation(button, radius)
 
 static func gradient_style(top: Color, bottom: Color, radius: int, texture_size: Vector2i) -> StyleBoxTexture:
@@ -490,9 +443,14 @@ static func rounded_gradient_texture(top: Color, bottom: Color, radius: int, tex
 	var denom := float(max(1, w + h - 2))
 	for y in range(h):
 		for x in range(w):
-			if is_inside_rounded_rect(x, y, w, h, radius):
+			var p := Vector2(float(x) + 0.5, float(y) + 0.5)
+			var dist := rounded_rect_sdf(p - Vector2(w, h) * 0.5, Vector2(w, h) * 0.5, float(radius))
+			var alpha := sdf_alpha(dist)
+			if alpha > 0.0:
 				var t := float(x + y) / denom
-				image.set_pixel(x, y, top.lerp(bottom, t))
+				var color := top.lerp(bottom, t)
+				color.a *= alpha
+				image.set_pixel(x, y, color)
 	var texture := ImageTexture.create_from_image(image)
 	_rounded_gradient_cache[key] = texture
 	return texture
@@ -508,19 +466,24 @@ static func circle_gradient_texture(diameter: int, top: Color, bottom: Color) ->
 	var denom := float(max(1, 2 * (diameter - 1)))
 	for y in range(diameter):
 		for x in range(diameter):
-			var offset := Vector2(float(x), float(y)) - center
-			if offset.length() <= radius:
+			var offset := Vector2(float(x) + 0.5, float(y) + 0.5) - center
+			var alpha := sdf_alpha(offset.length() - radius)
+			if alpha > 0.0:
 				# Diagonal 135° gradient to match the primary button's fill.
 				var t := float(x + y) / denom
-				image.set_pixel(x, y, top.lerp(bottom, t))
+				var color := top.lerp(bottom, t)
+				color.a *= alpha
+				image.set_pixel(x, y, color)
 	var texture := ImageTexture.create_from_image(image)
 	_circle_gradient_cache[key] = texture
 	return texture
 
-static func is_inside_rounded_rect(x: int, y: int, w: int, h: int, radius: int) -> bool:
-	var cx := clampi(x, radius, w - radius - 1)
-	var cy := clampi(y, radius, h - radius - 1)
-	return Vector2(x - cx, y - cy).length() <= float(radius)
+static func rounded_rect_sdf(p: Vector2, half_size: Vector2, radius: float) -> float:
+	var q := Vector2(absf(p.x), absf(p.y)) - half_size + Vector2(radius, radius)
+	return Vector2(maxf(q.x, 0.0), maxf(q.y, 0.0)).length() + minf(maxf(q.x, q.y), 0.0) - radius
+
+static func sdf_alpha(distance: float) -> float:
+	return 1.0 - smoothstep(-1.0, 1.0, distance)
 
 # ============================================================================
 # Icons & helpers
@@ -567,13 +530,8 @@ static func circle_button(parent: Node, position: Vector2, diameter: float = 127
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = GLASS_BG
 	_set_radius(normal, radius)
-	normal.corner_detail = 20
-	normal.anti_aliasing = true
 	normal.border_color = GLASS_BORDER
 	_set_border(normal, 3)
-	normal.shadow_color = SHADOW_CARD
-	normal.shadow_size = 8
-	normal.shadow_offset = Vector2(0, 3)
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", normal.duplicate())
 	button.add_theme_stylebox_override("pressed", normal.duplicate())
@@ -604,7 +562,7 @@ static func soft_button(button: Button, radius: int = CORNER) -> void:
 # Progress pill in the mockup (not the solid gradient used for confirm dialogs).
 static func danger_soft_button(button: Button, radius: int = CORNER) -> void:
 	var normal := StyleBoxFlat.new()
-	# Mockup: pale coral fill + coral border, NO drop shadow. Text stays crimson.
+	# Mockup: pale coral fill + coral border. Text stays crimson.
 	var tint := DANGER_TEXT if is_dark() else Color(0.941, 0.392, 0.372)  # coral #F0645F
 	normal.bg_color = Color(tint.r, tint.g, tint.b, 0.14)
 	normal.border_color = Color(tint.r, tint.g, tint.b, 0.30)
@@ -638,8 +596,10 @@ static func pop_scale(control: Control, peak: float, out_duration: float = 0.10,
 # Hover overlay opacity at full hover. Dark theme lightens (white overlay), light
 # theme darkens (black overlay) — a soft tint that reads on either surface. Kept
 # per-theme because black reads a touch heavier than white at equal opacity.
-const HOVER_LIGHTEN_ALPHA := 0.12   # dark theme: white overlay
-const HOVER_DARKEN_ALPHA := 0.07    # light theme: black overlay
+const HOVER_LIGHTEN_ALPHA := 0.04   # dark theme: white overlay
+const HOVER_DARKEN_ALPHA := 0.04    # light theme: black overlay
+# Press feedback scale (held-down size); springs back to 1.0 on release.
+const PRESS_SCALE := 0.95
 
 # Hover feedback = a soft tint overlay (darken in light theme / lighten in dark),
 # NOT a scale-up; press feedback stays a small scale-down. `highlight_radius`
@@ -651,13 +611,24 @@ static func add_press_animation(button: Button, highlight_radius: int = -1) -> v
 		button.set_meta("hover_radius", highlight_radius)
 	button.mouse_entered.connect(func() -> void: _hover_highlight(button, true))
 	button.mouse_exited.connect(func() -> void: _hover_highlight(button, false))
-	button.pressed.connect(func() -> void:
-		if not is_instance_valid(button):
-			return
-		var tween := button.create_tween()
-		tween.tween_property(button, "scale", Vector2(0.965, 0.965), 0.055).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-		tween.tween_property(button, "scale", Vector2.ONE, 0.11).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	)
+	# Press = a hold: shrink on button-down, spring back on button-up (not a
+	# one-shot bounce on click), so a held button stays shrunk.
+	button.button_down.connect(func() -> void: press_hold(button, true))
+	button.button_up.connect(func() -> void: press_hold(button, false))
+
+# Press-hold feedback: the control shrinks while held (pressed=true) and springs
+# smoothly back to full size on release (pressed=false). Smooth ease-out with no
+# overshoot, so it doesn't read as jerky. Scales around the control's current
+# pivot_offset — callers set a custom pivot for off-center shapes; buttons
+# default to their own center.
+static func press_hold(control: Control, pressed: bool) -> void:
+	if not is_instance_valid(control):
+		return
+	var tween := control.create_tween()
+	if pressed:
+		tween.tween_property(control, "scale", Vector2(PRESS_SCALE, PRESS_SCALE), 0.10).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	else:
+		tween.tween_property(control, "scale", Vector2.ONE, 0.16).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 static func _hover_highlight(button: Button, entering: bool) -> void:
 	if not is_instance_valid(button) or button.disabled:
@@ -717,24 +688,6 @@ static func _hover_radius_for(button: Button) -> int:
 		return mini(int((base as StyleBoxFlat).corner_radius_top_left), max_radius)
 	return max_radius
 
-static func add_embedded_shadow(button: Button, color: Color, radius: int = 20, shadow_size: int = 10, offset_y: int = 4) -> void:
-	var shadow := Panel.new()
-	shadow.name = "SoftShadow"
-	# Anchored to the button so it tracks size changes after styling.
-	shadow.set_anchors_preset(Control.PRESET_FULL_RECT)
-	shadow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	shadow.z_index = -1
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0, 0, 0, 0)
-	_set_radius(style, radius)
-	# Default 10/4 = glass_panel whisper (menu buttons). Popups pass a bigger
-	# colored glow to match the mockup (0 23px 54px rgba(color,0.22)).
-	style.shadow_color = color
-	style.shadow_size = shadow_size
-	style.shadow_offset = Vector2(0, offset_y)
-	shadow.add_theme_stylebox_override("panel", style)
-	button.add_child(shadow)
-
 # Diagonal (135°) gradient FILL for label text — matches the primary button. The
 # label must be sized to its text (VERTEX is normalized by rect_size).
 static func gradient_text_material(top: Color, bottom: Color, rect_size: Vector2) -> ShaderMaterial:
@@ -758,109 +711,3 @@ void fragment() {
 	mat.set_shader_parameter("bottom_color", bottom)
 	mat.set_shader_parameter("rect_size", rect_size)
 	return mat
-
-# ============================================================================
-# Unified popup shell (see "iPhone 17 Pro Popups" mockup). One shared look for
-# every dialog: 1005-wide glass panel (radius 101), a 214px gradient icon badge
-# overhanging the top, 64px title, and 188/168-tall primary/secondary buttons.
-# ============================================================================
-
-const POPUP_WIDTH := 1005.0
-const POPUP_PAD := 80.0            # left/right/bottom inset
-const POPUP_RADIUS := 101
-const POPUP_BADGE := 214.0
-const POPUP_BADGE_Y := -107.0      # badge overhangs above the panel top
-const POPUP_TITLE_Y := 154.0
-const POPUP_PRIMARY_H := 188.0
-const POPUP_SECONDARY_H := 168.0
-
-static func popup_width(viewport_width: float) -> float:
-	return minf(viewport_width - 100.0, POPUP_WIDTH)
-
-static func popup_panel_style() -> StyleBoxFlat:
-	# The mockup's dark popup is 8% white (backdrop blur separates it). Godot has
-	# no backdrop blur, so use the near-opaque elevated popup tone or the game
-	# orbit / screen behind bleeds straight through the panel.
-	var s := StyleBoxFlat.new()
-	s.bg_color = GLASS_POPUP_BG
-	s.border_color = GLASS_POPUP_BORDER
-	s.shadow_color = Color(0, 0, 0, 0.32) if is_dark() else Color(0.117, 0.039, 0.274, 0.16)
-	_set_border(s, 3)
-	_set_radius(s, POPUP_RADIUS)
-	s.shadow_size = 44
-	s.shadow_offset = Vector2(0, 26)
-	return s
-
-# Gradient icon badge overhanging the panel top. Returns the circle so callers
-# can animate it. `top`/`bottom` are the badge gradient; icon is tinted white.
-static func popup_badge(parent: Control, panel_width: float, top: Color, bottom: Color, icon_tex: Texture2D, icon_px: float) -> TextureRect:
-	var d := POPUP_BADGE
-	var x := panel_width * 0.5 - d * 0.5
-	# Colored glow (mockup 0 20px 47px rgba(color,0.26)).
-	var glow := Panel.new()
-	glow.position = Vector2(x, POPUP_BADGE_Y)
-	glow.size = Vector2(d, d)
-	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var gs := StyleBoxFlat.new()
-	gs.bg_color = Color(0, 0, 0, 0)
-	_set_radius(gs, int(d * 0.5) - 2)
-	# Identical to the primary button's shadow (SHADOW_CARD 10/4), not a colored
-	# glow — per design review all badge shadows match the Continue button.
-	gs.shadow_color = SHADOW_CARD
-	gs.shadow_size = 10
-	gs.shadow_offset = Vector2(0, 4)
-	glow.add_theme_stylebox_override("panel", gs)
-	parent.add_child(glow)
-	var circle := TextureRect.new()
-	circle.texture = circle_gradient_texture(int(d), top, bottom)
-	circle.position = Vector2(x, POPUP_BADGE_Y)
-	circle.size = Vector2(d, d)
-	circle.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(circle)
-	icon(icon_tex, circle, Vector2((d - icon_px) * 0.5, (d - icon_px) * 0.5), Vector2(icon_px, icon_px), Color.WHITE)
-	return circle
-
-static func popup_title(parent: Control, panel_width: float, text: String, y: float = POPUP_TITLE_Y) -> Label:
-	var l := Label.new()
-	l.text = text.to_upper()
-	l.position = Vector2(0, y)
-	l.size = Vector2(panel_width, 84)
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	apply_font(l, FONT_EXTRABOLD, 64, TEXT)
-	parent.add_child(l)
-	return l
-
-static func popup_body(parent: Control, panel_width: float, text: String, y: float, height: float = 200.0) -> Label:
-	var l := Label.new()
-	l.text = text
-	l.position = Vector2(POPUP_PAD, y)
-	l.size = Vector2(panel_width - POPUP_PAD * 2.0, height)
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	apply_font(l, FONT_SEMIBOLD, 45, MUTED)
-	parent.add_child(l)
-	return l
-
-static func popup_primary_button(text: String, panel_width: float, y: float, danger: bool = false) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.position = Vector2(POPUP_PAD, y)
-	b.size = Vector2(panel_width - POPUP_PAD * 2.0, POPUP_PRIMARY_H)
-	b.add_theme_font_size_override("font_size", 54)
-	if danger:
-		# Fixed mockup red (#FF9B96→#E0453F) both themes + red glow.
-		_gradient_button(b, Color("#FF9B96"), Color("#E0453F"), 67, Color(0.878, 0.271, 0.247, 0.24), 28, 16)
-	else:
-		_gradient_button(b, PRIMARY_TOP, PRIMARY_BOTTOM, 67, Color(0.357, 0.196, 0.768, 0.24), 28, 16)
-	return b
-
-static func popup_secondary_button(text: String, panel_width: float, y: float) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.position = Vector2(POPUP_PAD, y)
-	b.size = Vector2(panel_width - POPUP_PAD * 2.0, POPUP_SECONDARY_H)
-	b.add_theme_font_size_override("font_size", 50)
-	soft_button(b, 67)
-	return b

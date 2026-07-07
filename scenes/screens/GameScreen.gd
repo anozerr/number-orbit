@@ -2,6 +2,8 @@ class_name GameScreen
 extends Node2D
 
 const OperationLegendScene = preload("res://scenes/ui/OperationLegend.tscn")
+const HintPopupScript = preload("res://scenes/ui/HintPopup.gd")
+const CoachOverlayScript = preload("res://scenes/ui/CoachOverlay.gd")
 
 signal back_pressed
 signal settings_pressed
@@ -32,104 +34,13 @@ const ACTION_BUTTON_HEIGHT := 174.0
 const LEGEND_Y := 1626.0
 const CENTER_CIRCLE_DIAMETER := 335
 const CENTER_CIRCLE_RADIUS := CENTER_CIRCLE_DIAMETER * 0.5
-# Coach tooltip (tutorial spotlight). Opaque popup surface, sized to the base
-# design system rather than the old pre-redesign 760/font-24 panel.
-const COACH_PANEL_WIDTH := 912.0
-const COACH_PANEL_PAD := 54.0
-
-class CoachDimMask:
-	extends ColorRect
-
-	var holes: Array[Dictionary] = []
-	var shader_material: ShaderMaterial
-
-	func _ready() -> void:
-		color = Color.WHITE
-		mouse_filter = Control.MOUSE_FILTER_IGNORE
-		shader_material = ShaderMaterial.new()
-		var shader := Shader.new()
-		shader.code = """
-shader_type canvas_item;
-
-uniform vec4 dim_color : source_color = vec4(0.03, 0.02, 0.08, 0.5);
-uniform vec4 rim_color : source_color = vec4(1.0, 1.0, 1.0, 0.0);
-uniform float rim_width = 30.0;
-uniform vec2 mask_size = vec2(1206.0, 2622.0);
-uniform int hole_count = 0;
-uniform vec4 hole_rects[16];
-uniform float hole_radii[16];
-
-float rounded_box_sdf(vec2 p, vec2 half_size, float radius) {
-	vec2 q = abs(p) - half_size + vec2(radius);
-	return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - radius;
-}
-
-void fragment() {
-	vec2 p = UV * mask_size;
-	float clear_amount = 0.0;
-	float rim = 0.0;
-	for (int i = 0; i < 16; i++) {
-		if (i >= hole_count) {
-			break;
-		}
-		vec4 rect = hole_rects[i];
-		vec2 half_size = rect.zw * 0.5;
-		vec2 center = rect.xy + half_size;
-		float radius = min(hole_radii[i], min(half_size.x, half_size.y));
-		float dist = rounded_box_sdf(p - center, half_size, radius);
-		clear_amount = max(clear_amount, 1.0 - smoothstep(-1.5, 1.5, dist));
-		// Soft ring hugging the OUTSIDE of the hole edge — defines the focus even
-		// when the dim reads weakly (dark theme over a dark background).
-		rim = max(rim, smoothstep(rim_width, 1.5, dist) * step(1.5, dist));
-	}
-	COLOR = dim_color;
-	COLOR.a *= 1.0 - clear_amount;
-	float rim_a = rim * rim_color.a * (1.0 - clear_amount);
-	COLOR.rgb = mix(COLOR.rgb, rim_color.rgb, rim_a);
-	COLOR.a = max(COLOR.a, rim_a);
-}
-"""
-		shader_material.shader = shader
-		material = shader_material
-		_update_shader()
-
-	func set_holes(next_holes: Array[Dictionary]) -> void:
-		holes = next_holes
-		_update_shader()
-
-	func set_theme_colors(dim: Color, rim: Color) -> void:
-		if shader_material == null:
-			return
-		shader_material.set_shader_parameter("dim_color", dim)
-		shader_material.set_shader_parameter("rim_color", rim)
-
-	func _update_shader() -> void:
-		if shader_material == null:
-			return
-		var rects := PackedVector4Array()
-		var radii := PackedFloat32Array()
-		var count: int = min(holes.size(), 16)
-		for i in range(16):
-			if i < count:
-				var hole: Dictionary = holes[i]
-				var rect := Rect2()
-				if hole.has("rect"):
-					rect = hole["rect"]
-				rects.append(Vector4(rect.position.x, rect.position.y, rect.size.x, rect.size.y))
-				radii.append(float(hole.get("radius", 0.0)))
-			else:
-				rects.append(Vector4.ZERO)
-				radii.append(0.0)
-		shader_material.set_shader_parameter("mask_size", size)
-		shader_material.set_shader_parameter("hole_count", count)
-		shader_material.set_shader_parameter("hole_rects", rects)
-		shader_material.set_shader_parameter("hole_radii", radii)
 
 var center_label: Label
 var level_label: Label
 var level_bg: Panel
 var moves_bg: Panel
-var target_panel: Panel
+var target_panel: Control
+var target_circle: TextureRect
 var level_hover: Panel
 var moves_hover: Panel
 var goal_label: Label
@@ -139,23 +50,13 @@ var tutorial_help_label: Label
 var _status_notch_shader: Shader
 var moves_count_label: Label
 var bulbs_button: Button
-var hint_popup: Control
-var hint_body_label: Label
-var hint_balance_label: Label
-var hint_buy_button: Button
-var hint_ad_button: Button
-var hint_cancel_button: Button
-var hint_move_circle: Panel
-var hint_move_label: Label
 var restart_button: Button
 var back_button: Button
 var settings_button: Button
-var hint_overlay: ColorRect
-var hint_panel: Panel
+var hint_popup: Control
 var operation_legend: OperationLegend
 var orbit: Node2D
 var center_circle_texture: Texture2D
-var center_shadow_style: StyleBoxFlat
 var orbit_angle := 0.0
 var last_center_number: int = -999999
 var level_failed: bool = false
@@ -166,17 +67,9 @@ var current_target_value: int = 0
 var current_thresholds: Array = []
 var current_star_bands: Array = []
 var current_is_tutorial := false
-var cached_popup_hint_text: String = ""
-var cached_popup_move_index: int = -1
 var previous_failed_state := false
 var tutorial_help_text_current := ""
 var coach_overlay: Control
-var coach_dim_mask: CoachDimMask
-var coach_panel: Panel
-var coach_label: Label
-var coach_version := 0
-var coach_steps: Array = []
-var coach_step_index := 0
 var info_line_error_state: Variant = null
 # --- Info-line marquee (single scrolling line: enters from the right, rests 3s,
 # exits left into the edge fade, then reverts to the default caption). ---
@@ -267,23 +160,11 @@ func _apply_layout() -> void:
 
 	# Full-screen overlays cover the whole viewport.
 	if hint_popup != null:
-		hint_popup.size = vp
-	if hint_overlay != null:
-		hint_overlay.size = vp
-	if hint_panel != null:
-		hint_panel.position = (vp - hint_panel.size) * 0.5
+		hint_popup.layout_to_viewport(vp)
 	if coach_overlay != null:
-		coach_overlay.size = vp
-	if coach_dim_mask != null:
-		coach_dim_mask.size = vp
+		coach_overlay.configure_context(coach_context())
+		coach_overlay.layout_to_viewport(vp)
 	queue_redraw()
-
-func _unhandled_input(event: InputEvent) -> void:
-	var mouse_event := event as InputEventMouseButton
-	if mouse_event == null or not mouse_event.pressed:
-		return
-	if operation_legend != null:
-		operation_legend.close_callout_if_outside(mouse_event.position)
 
 func build() -> void:
 	for child in get_children():
@@ -291,7 +172,6 @@ func build() -> void:
 	# Same fill as the primary Play/Continue button (mockup parity): diagonal
 	# PRIMARY_TOP→PRIMARY_BOTTOM gradient.
 	center_circle_texture = UIStyles.circle_gradient_texture(CENTER_CIRCLE_DIAMETER, UIStyles.PRIMARY_TOP, UIStyles.PRIMARY_BOTTOM)
-	center_shadow_style = make_center_shadow_style()
 
 	center_label = Label.new()
 	center_label.position = screen_center - Vector2(245, 90)
@@ -303,7 +183,7 @@ func build() -> void:
 
 	# The status pill is TWO independent, self-contained blocks — LEVEL (left) and
 	# MOVES (right). Each is a half-width rounded panel whose inner edge is a
-	# concave arc cut around the target (its own fill, border, shadow and rim); the
+	# concave arc cut around the target; fill and border come from one SDF shape.
 	# two meet under the target badge, which hides the seam. Kept separate so each
 	# can highlight — and later animate — on its own.
 	var half_size := Vector2(TOP_STATUS_SIZE.x * 0.5, TOP_STATUS_SIZE.y)
@@ -313,6 +193,7 @@ func build() -> void:
 
 	# LEFT (LEVEL) — notch cut on the inner (right) edge.
 	level_bg = make_status_block(Vector2(EDGE_MARGIN, TOP_STATUS_Y), half_size, Vector2(half_size.x, mid_y), notch_c)
+	level_bg.pivot_offset = Vector2(text_w * 0.5, mid_y)
 	add_child(level_bg)
 	level_hover = make_status_hover(half_size, Vector2(half_size.x, mid_y), notch_c)
 	level_bg.add_child(level_hover)
@@ -321,10 +202,12 @@ func build() -> void:
 	level_label.size = Vector2(text_w, TOP_STATUS_SIZE.y)
 	level_bg.add_child(level_label)
 	level_label.gui_input.connect(_on_level_panel_input)
+	level_label.mouse_exited.connect(func() -> void: UIStyles.press_hold(level_bg, false))
 	UIStyles.attach_hover_tint(level_label, level_hover)
 
 	# RIGHT (MOVES) — notch cut on the inner (left) edge.
 	moves_bg = make_status_block(Vector2(EDGE_MARGIN + half_size.x, TOP_STATUS_Y), half_size, Vector2(0, mid_y), notch_c)
+	moves_bg.pivot_offset = Vector2(notch_c + text_w * 0.5, mid_y)
 	add_child(moves_bg)
 	moves_hover = make_status_hover(half_size, Vector2(0, mid_y), notch_c)
 	moves_bg.add_child(moves_hover)
@@ -333,17 +216,24 @@ func build() -> void:
 	moves_count_label.size = Vector2(text_w, TOP_STATUS_SIZE.y)
 	moves_bg.add_child(moves_count_label)
 	moves_count_label.gui_input.connect(_on_moves_panel_input)
+	moves_count_label.mouse_exited.connect(func() -> void: UIStyles.press_hold(moves_bg, false))
 	UIStyles.attach_hover_tint(moves_count_label, moves_hover)
 
-	target_panel = Panel.new()
+	target_panel = Control.new()
 	target_panel.position = Vector2(603, TOP_STATUS_Y + TOP_STATUS_SIZE.y * 0.5) - TARGET_BUBBLE_SIZE * 0.5
 	target_panel.size = TARGET_BUBBLE_SIZE
 	target_panel.z_index = 6
 	target_panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	var target_style := UIStyles.gradient_style(UIStyles.TEAL_TOP, UIStyles.TEAL_BOTTOM, 134, Vector2i(268, 268))
-	target_panel.add_theme_stylebox_override("panel", target_style)
 	add_child(target_panel)
 	target_panel.gui_input.connect(_on_goal_panel_input)
+
+	target_circle = TextureRect.new()
+	target_circle.position = Vector2.ZERO
+	target_circle.size = TARGET_BUBBLE_SIZE
+	target_circle.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	target_circle.texture = UIStyles.circle_gradient_texture(int(TARGET_BUBBLE_SIZE.x), UIStyles.TEAL_TOP, UIStyles.TEAL_BOTTOM)
+	target_circle.stretch_mode = TextureRect.STRETCH_SCALE
+	target_panel.add_child(target_circle)
 
 	goal_label = Label.new()
 	goal_label.position = Vector2.ZERO
@@ -432,7 +322,7 @@ void fragment() {
 	bulbs_button.size = Vector2(455, ACTION_BUTTON_HEIGHT)
 	bulbs_button.add_theme_font_size_override("font_size", 47)
 	UIStyles.menu_button(bulbs_button)
-	bulbs_button.pressed.connect(show_hint_popup)
+	bulbs_button.pressed.connect(func(): hint_popup.show_prompt())
 	add_child(bulbs_button)
 
 	operation_legend = OperationLegendScene.instantiate()
@@ -442,8 +332,15 @@ void fragment() {
 	orbit = Node2D.new()
 	add_child(orbit)
 
-	build_hint_popup()
-	build_coach_overlay()
+	hint_popup = HintPopupScript.new()
+	add_child(hint_popup)
+	hint_popup.build(Layout.viewport_size(self).x)
+	hint_popup.hint_requested.connect(func(): hint_requested.emit())
+	hint_popup.hint_ad_requested.connect(func(): hint_ad_requested.emit())
+
+	coach_overlay = CoachOverlayScript.new()
+	add_child(coach_overlay)
+	coach_overlay.build()
 	_apply_layout()
 
 func configure(title_text: String, current_number: int, target_number: int, moves: int, thresholds: Array, star_bands: Array, orbit_items: Array, allowed_ops: Array, failed: bool, hint_points: int, tutorial: bool = false, tutorial_help: String = "", coach_hint: Dictionary = {}) -> void:
@@ -455,9 +352,8 @@ func configure(title_text: String, current_number: int, target_number: int, move
 	current_thresholds = thresholds.duplicate()
 	current_star_bands = star_bands.duplicate(true)
 	current_is_tutorial = tutorial
-	if cached_popup_move_index != current_moves:
-		cached_popup_hint_text = ""
-		cached_popup_move_index = -1
+	if hint_popup != null:
+		hint_popup.configure_state(current_moves, current_hint_points)
 	level_label.text = title_text
 	goal_label.text = str(target_number)
 	tutorial_help_text_current = fail_comment_text() if failed else (tutorial_help if tutorial else progress_comment_text(moves))
@@ -481,9 +377,10 @@ func configure(title_text: String, current_number: int, target_number: int, move
 	previous_failed_state = level_failed
 	set_orbit_items(orbit_items)
 	if tutorial and not coach_hint.is_empty():
-		show_coach_hint(coach_hint)
+		coach_overlay.configure_context(coach_context())
+		coach_overlay.show_hint(coach_hint)
 	else:
-		hide_coach_hint()
+		coach_overlay.hide_hint()
 	queue_redraw()
 
 func pop_center_number() -> void:
@@ -494,19 +391,29 @@ func pulse_failure_controls() -> void:
 
 func _on_moves_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
-	if mouse_event != null and mouse_event.pressed:
+	if mouse_event == null:
+		return
+	if mouse_event.pressed:
+		UIStyles.press_hold(moves_bg, true)
 		if current_is_tutorial:
 			show_temporary_help(Locale.t("game.tap.moves_tut", "Tutorial moves earn no stars."), false)
 		else:
 			show_temporary_help(star_requirements_text(), false)
+	else:
+		UIStyles.press_hold(moves_bg, false)
 
 func _on_level_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
-	if mouse_event != null and mouse_event.pressed:
+	if mouse_event == null:
+		return
+	if mouse_event.pressed:
+		UIStyles.press_hold(level_bg, true)
 		if current_is_tutorial:
 			show_temporary_help(Locale.t("game.tap.level_tut", "One step at a time."), false)
 		else:
 			show_temporary_help(Locale.t("game.tap.level", "Beat this to unlock the next."), false)
+	else:
+		UIStyles.press_hold(level_bg, false)
 
 func _on_goal_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
@@ -646,15 +553,14 @@ func pop_goal_panel() -> void:
 
 # --- Status pill (LEVEL / MOVES) building blocks ------------------------------
 
-# A half-width status block: a rounded glass panel (own fill, border, shadow)
-# with a concave notch cut around the target on its inner edge + a thin rim
-# hugging that arc. Mouse-transparent; the label inside handles input.
+# A half-width status block: the straight outer border is the same glass style as
+# the rest of the UI; the shader only cuts the target notch and draws that arc.
 func make_status_block(pos: Vector2, size: Vector2, notch_center: Vector2, notch_radius: float) -> Panel:
 	var panel := Panel.new()
 	panel.position = pos
 	panel.size = size
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_theme_stylebox_override("panel", UIStyles.soft_panel(Color.WHITE, 67))
+	panel.add_theme_stylebox_override("panel", UIStyles.glass_panel(67))
 	panel.material = status_notch_material(notch_center, notch_radius, size, UIStyles.GLASS_BORDER)
 	return panel
 
@@ -667,16 +573,15 @@ func make_status_hover(size: Vector2, notch_center: Vector2, notch_radius: float
 	overlay.size = size
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.modulate.a = 0.0
-	var s := StyleBoxFlat.new()
-	s.bg_color = Color(0, 0, 0)
-	s.anti_aliasing = true
-	s.corner_radius_top_left = 67
-	s.corner_radius_top_right = 67
-	s.corner_radius_bottom_left = 67
-	s.corner_radius_bottom_right = 67
-	overlay.add_theme_stylebox_override("panel", s)
+	overlay.add_theme_stylebox_override("panel", status_hover_style())
 	overlay.material = status_notch_material(notch_center, notch_radius, size, Color(0, 0, 0, 0))
 	return overlay
+
+func status_hover_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0, 0, 0)
+	UIStyles._set_radius(style, 67)
+	return style
 
 # A centered status label (LEVEL / MOVES text). It also handles taps + hover, so
 # it is mouse-STOP; the caller sets position/size.
@@ -688,16 +593,16 @@ func make_status_label() -> Label:
 	UIStyles.apply_font(label, UIStyles.FONT_BOLD, 44, UIStyles.STATUSBAR_TEXT)
 	return label
 
-# Shared notch shader material: punches the circular hole (leaving the concave
-# arc around the target) at `notch_center` and strokes a thin rim in `rim_color`
-# (pass a transparent rim for the hover overlay). `panel_size` maps UV → pixels.
-func status_notch_material(notch_center: Vector2, notch_radius: float, panel_size: Vector2, rim_color: Color) -> ShaderMaterial:
+# Shared status shape shader material. The panel's own StyleBoxFlat draws the
+# normal glass frame; this shader clips the target notch and adds the missing arc
+# with the same border color/width. `panel_size` maps UV → pixels.
+func status_notch_material(notch_center: Vector2, notch_radius: float, panel_size: Vector2, border_color: Color) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.shader = status_notch_shader()
 	mat.set_shader_parameter("notch_center", notch_center)
 	mat.set_shader_parameter("notch_radius", notch_radius)
 	mat.set_shader_parameter("panel_size", panel_size)
-	mat.set_shader_parameter("rim_color", rim_color)
+	mat.set_shader_parameter("border_color", border_color)
 	return mat
 
 func status_notch_shader() -> Shader:
@@ -708,14 +613,34 @@ shader_type canvas_item;
 uniform vec2 notch_center = vec2(536.0, 107.0);
 uniform float notch_radius = 150.0;
 uniform vec2 panel_size = vec2(536.0, 214.0);
-uniform vec4 rim_color : source_color = vec4(0.0);
-uniform float rim_width = 2.5;
+uniform vec4 border_color : source_color = vec4(0.0);
+uniform float outer_radius = 67.0;
+uniform float border_width = 3.0;
+uniform float notch_border_width = 3.6;
+
+float rounded_box_sdf(vec2 p, vec2 half_size, float radius) {
+	vec2 q = abs(p) - half_size + vec2(radius);
+	return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - radius;
+}
+
 void fragment() {
-	float d = distance(UV * panel_size, notch_center);
-	COLOR.a *= smoothstep(notch_radius - 1.0, notch_radius + 1.0, d);
-	float rim_outer = notch_radius + rim_width;
-	float rim = smoothstep(notch_radius - 0.75, notch_radius + 0.75, d) * (1.0 - smoothstep(rim_outer - 0.75, rim_outer + 0.75, d));
-	COLOR.rgb = mix(COLOR.rgb, rim_color.rgb, rim * rim_color.a * 1.4);
+	vec2 p = UV * panel_size;
+	float rect_d = rounded_box_sdf(p - panel_size * 0.5, panel_size * 0.5, outer_radius);
+	float notch_d = distance(p, notch_center) - notch_radius;
+	float shape_d = max(rect_d, -notch_d);
+	float alpha = 1.0 - smoothstep(-1.0, 1.0, shape_d);
+	float rect_inside = max(-rect_d, 0.0);
+	float rect_border = (1.0 - smoothstep(border_width - 1.0, border_width + 1.0, rect_inside)) * alpha;
+	float notch_border = (1.0 - smoothstep(notch_border_width - 1.0, notch_border_width + 1.0, notch_d)) * step(0.0, notch_d) * alpha;
+	notch_border *= 1.0 - rect_border * 0.82;
+	vec4 fill = vec4(COLOR.rgb, COLOR.a * alpha);
+	float border_a = notch_border * border_color.a;
+	float out_a = border_a + fill.a * (1.0 - border_a);
+	vec3 out_rgb = fill.rgb;
+	if (out_a > 0.0) {
+		out_rgb = (border_color.rgb * border_a + fill.rgb * fill.a * (1.0 - border_a)) / out_a;
+	}
+	COLOR = vec4(out_rgb, out_a);
 }
 """
 	return _status_notch_shader
@@ -850,8 +775,6 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	if not visible:
 		return
-	if center_shadow_style != null:
-		draw_style_box(center_shadow_style, Rect2(screen_center - Vector2(CENTER_CIRCLE_RADIUS, CENTER_CIRCLE_RADIUS), Vector2(CENTER_CIRCLE_DIAMETER, CENTER_CIRCLE_DIAMETER)))
 	if center_circle_texture != null:
 		draw_texture_rect(center_circle_texture, Rect2(screen_center - Vector2(CENTER_CIRCLE_RADIUS, CENTER_CIRCLE_RADIUS), Vector2(CENTER_CIRCLE_DIAMETER, CENTER_CIRCLE_DIAMETER)), false)
 	# Slightly wider ring, filled with the purple-button color (mid of the primary
@@ -859,26 +782,6 @@ func _draw() -> void:
 	var ring_color := UIStyles.PRIMARY_TOP.lerp(UIStyles.PRIMARY_BOTTOM, 0.5)
 	ring_color.a = 0.55
 	draw_arc(screen_center, orbit_radius, 0.0, TAU, 200, ring_color, 6.0, true)
-
-func make_center_shadow_style() -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0, 0, 0, 0)
-	style.border_width_left = 0
-	style.border_width_right = 0
-	style.border_width_top = 0
-	style.border_width_bottom = 0
-	style.corner_radius_top_left = int(CENTER_CIRCLE_RADIUS)
-	style.corner_radius_top_right = int(CENTER_CIRCLE_RADIUS)
-	style.corner_radius_bottom_left = int(CENTER_CIRCLE_RADIUS)
-	style.corner_radius_bottom_right = int(CENTER_CIRCLE_RADIUS)
-	# Purple glow halo under the center orb (matches the mockup's colored drop
-	# shadow); larger + softer in dark theme where the glow reads as a halo.
-	# Identical to the Continue/Play button shadow (SHADOW_CARD 10/4) so the
-	# center orb reads as the same material, per design review.
-	style.shadow_color = UIStyles.SHADOW_CARD
-	style.shadow_size = 10
-	style.shadow_offset = Vector2(0, 4)
-	return style
 
 func update_orbit_positions(snap: bool = false) -> void:
 	for i in range(orbit.get_child_count()):
@@ -927,350 +830,38 @@ func clear_orbit_buttons() -> void:
 		orbit.remove_child(child)
 		child.free()
 
-func build_hint_popup() -> void:
-	hint_popup = Control.new()
-	hint_popup.z_index = 100
-	hint_popup.size = Vector2(1080, 1920)
-	hint_popup.visible = false
-	add_child(hint_popup)
-
-	hint_overlay = ColorRect.new()
-	hint_overlay.size = Vector2(1080, 1920)
-	hint_overlay.color = Color(0.03, 0.02, 0.08, 0.55)
-	hint_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	hint_popup.add_child(hint_overlay)
-
-	var pw := UIStyles.popup_width(Layout.viewport_size(self).x)
-	var panel := Panel.new()
-	panel.size = Vector2(pw, 1003)
-	panel.add_theme_stylebox_override("panel", UIStyles.popup_panel_style())
-	hint_popup.add_child(panel)
-	hint_panel = panel
-
-	UIStyles.popup_badge(panel, pw, Color("#FFD98F"), Color("#F5A93D"), UIStyles.ICON_BULB, 101.0)
-	UIStyles.popup_title(panel, pw, Locale.t("hint.title", "HINT"))
-
-	hint_body_label = UIStyles.popup_body(panel, pw, "Spend bulbs to reveal one next move.", 264.0, 130.0)
-
-	hint_move_circle = Panel.new()
-	hint_move_circle.position = Vector2(pw * 0.5 - 87, 350)
-	hint_move_circle.size = Vector2(174, 174)
-	hint_move_circle.visible = false
-	panel.add_child(hint_move_circle)
-	hint_move_label = Label.new()
-	hint_move_label.position = Vector2.ZERO
-	hint_move_label.size = hint_move_circle.size
-	hint_move_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint_move_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(hint_move_label, UIStyles.FONT_EXTRABOLD, 60, UIStyles.TEXT)
-	hint_move_circle.add_child(hint_move_label)
-
-	hint_balance_label = Label.new()
-	hint_balance_label.position = Vector2(0, 430)
-	hint_balance_label.size = Vector2(pw, 58)
-	hint_balance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint_balance_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(hint_balance_label, UIStyles.FONT_SEMIBOLD, 44, UIStyles.MUTED)
-	panel.add_child(hint_balance_label)
-
-	hint_buy_button = UIStyles.popup_primary_button(Locale.t("hint.use", "Use Hint"), pw, 520.0)
-	hint_buy_button.pressed.connect(func(): hint_requested.emit())
-	panel.add_child(hint_buy_button)
-
-	hint_ad_button = UIStyles.popup_primary_button(Locale.t("levels.locked.watch_ad", "Watch Ad"), pw, 520.0)
-	hint_ad_button.pressed.connect(func(): hint_ad_requested.emit())
-	hint_ad_button.visible = false
-	panel.add_child(hint_ad_button)
-
-	hint_cancel_button = UIStyles.popup_secondary_button(Locale.t("common.cancel", "Cancel"), pw, 755.0)
-	hint_cancel_button.pressed.connect(func(): hint_popup.visible = false)
-	panel.add_child(hint_cancel_button)
-
 func show_hint_popup() -> void:
-	reset_hint_popup_layout()
-	if cached_popup_move_index == current_moves and not cached_popup_hint_text.is_empty():
-		apply_hint_result_text(cached_popup_hint_text)
-		hint_balance_label.text = Locale.t("hint.balance", "Balance: %d bulbs") % current_hint_points
-		hint_buy_button.visible = false
-		hint_ad_button.visible = false
-		hint_cancel_button.text = Locale.t("common.back", "Back")
-	else:
-		hint_body_label.text = Locale.t("hint.body", "Spend %d bulbs to reveal the next winning move.") % GameState.HINT_COST
-		hide_hint_move_circle()
-		hint_balance_label.text = Locale.t("hint.balance", "Balance: %d bulbs") % current_hint_points
-		hint_buy_button.visible = true
-		hint_ad_button.visible = false
-		hint_cancel_button.text = Locale.t("common.cancel", "Cancel")
-	hint_popup.visible = true
+	if hint_popup != null:
+		hint_popup.show_prompt()
 
 func show_hint_result(message: String, balance: int) -> void:
 	current_hint_points = balance
-	cached_popup_hint_text = message
-	cached_popup_move_index = current_moves
-	reset_hint_popup_layout()
-	apply_hint_result_text(message)
-	hint_balance_label.text = Locale.t("hint.balance", "Balance: %d bulbs") % current_hint_points
-	hint_buy_button.visible = false
-	hint_ad_button.visible = false
-	hint_cancel_button.text = Locale.t("common.back", "Back")
-	hint_popup.visible = true
+	if hint_popup != null:
+		hint_popup.show_result(message, balance)
 
 func show_insufficient_hint_balance(balance: int) -> void:
 	current_hint_points = balance
-	cached_popup_hint_text = ""
-	cached_popup_move_index = -1
-	reset_hint_popup_layout()
-	hint_body_label.text = Locale.t("hint.insufficient", "Not enough bulbs for a hint.")
-	hide_hint_move_circle()
-	hint_balance_label.text = Locale.t("hint.balance_short", "Balance: %d / %d bulbs") % [current_hint_points, GameState.HINT_COST]
-	hint_buy_button.visible = false
-	hint_ad_button.visible = true
-	hint_cancel_button.text = Locale.t("common.cancel", "Cancel")
-	hint_popup.visible = true
-
-func reset_hint_popup_layout() -> void:
-	var pw := hint_panel.size.x
-	hint_body_label.position = Vector2(UIStyles.POPUP_PAD, 264)
-	hint_body_label.size = Vector2(pw - UIStyles.POPUP_PAD * 2.0, 130)
-	hint_balance_label.position = Vector2(0, 430)
-	hint_balance_label.size = Vector2(pw, 58)
-	hide_hint_move_circle()
-
-func apply_hint_result_text(message: String) -> void:
-	var parsed := parse_hint_move(message)
-	if parsed.is_empty():
-		hint_body_label.text = message
-		hide_hint_move_circle()
-		return
-	var moves_left := extract_hint_moves_left(message)
-	var tap_next := Locale.t("hint.tap_next", "Tap this orbit number next.")
-	hint_body_label.text = "%s\n%s" % [moves_left, tap_next] if not moves_left.is_empty() else tap_next
-	var pw := hint_panel.size.x
-	hint_body_label.position = Vector2(UIStyles.POPUP_PAD, 250)
-	hint_body_label.size = Vector2(pw - UIStyles.POPUP_PAD * 2.0, 110)
-	hint_balance_label.position = Vector2(0, 600)
-	show_hint_move_circle(str(parsed["op"]), int(parsed["value"]))
-
-func extract_hint_moves_left(message: String) -> String:
-	# The "moves left" caption is the line that is NOT the internal "Next move:"
-	# marker (which is parsed, never shown), so this stays language-independent.
-	for line in message.split("\n", false):
-		var trimmed := str(line).strip_edges()
-		if trimmed.is_empty() or trimmed.begins_with("Next move:"):
-			continue
-		return trimmed
-	return ""
-
-func parse_hint_move(message: String) -> Dictionary:
-	var marker := "Next move:"
-	var idx := message.find(marker)
-	if idx < 0:
-		return {}
-	var tail := message.substr(idx + marker.length()).strip_edges()
-	var parts := tail.split(" ", false)
-	if parts.size() < 2:
-		return {}
-	var op := op_from_hint_symbol(str(parts[0]))
-	if op.is_empty():
-		return {}
-	return {"op": op, "value": int(parts[1])}
-
-func op_from_hint_symbol(symbol: String) -> String:
-	match symbol:
-		"+":
-			return "add"
-		"−", "-":
-			return "subtract"
-		"×", "x", "*":
-			return "multiply"
-		"÷", "/":
-			return "divide"
-	return ""
-
-func show_hint_move_circle(op: String, value: int) -> void:
-	if hint_move_circle == null or hint_move_label == null:
-		return
-	hint_move_circle.visible = true
-	hint_move_circle.position = Vector2(hint_panel.size.x * 0.5 - 87, 390)
-	var style: StyleBoxFlat = UIStyles.card(UIStyles.operation_bg(op), UIStyles.operation_border(op), 90)
-	style.border_width_left = 4
-	style.border_width_right = 4
-	style.border_width_top = 4
-	style.border_width_bottom = 4
-	hint_move_circle.add_theme_stylebox_override("panel", style)
-	hint_move_label.text = str(value)
-	UIStyles.apply_font(hint_move_label, UIStyles.FONT_BOLD, 50, UIStyles.operation_text(op))
-
-func hide_hint_move_circle() -> void:
-	if hint_move_circle != null:
-		hint_move_circle.visible = false
+	if hint_popup != null:
+		hint_popup.show_insufficient_balance(balance)
 
 func clear_hint_cache() -> void:
-	cached_popup_hint_text = ""
-	cached_popup_move_index = -1
 	if hint_popup != null:
-		hint_popup.visible = false
+		hint_popup.clear_cache()
 
-func build_coach_overlay() -> void:
-	coach_overlay = Control.new()
-	coach_overlay.position = Vector2.ZERO
-	coach_overlay.size = Vector2(1080, 1920)
-	coach_overlay.visible = false
-	coach_overlay.z_index = 90
-	coach_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	coach_overlay.gui_input.connect(_on_coach_overlay_input)
-	add_child(coach_overlay)
-
-	coach_dim_mask = CoachDimMask.new()
-	coach_dim_mask.position = Vector2.ZERO
-	coach_dim_mask.size = Vector2(1206, 2622)
-	coach_dim_mask.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	coach_overlay.add_child(coach_dim_mask)
-	coach_dim_mask.set_theme_colors(coach_dim_color(), coach_rim_color())
-
-	# Opaque, readable tooltip (matches the popup surface, both themes) — the old
-	# translucent glass let the dimmed screen bleed through and washed out the text.
-	coach_panel = Panel.new()
-	coach_panel.size = Vector2(COACH_PANEL_WIDTH, 150)
-	coach_panel.add_theme_stylebox_override("panel", UIStyles.glass_panel(UIStyles.CORNER, true))
-	coach_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	coach_panel.z_index = 2
-	coach_overlay.add_child(coach_panel)
-
-	coach_label = Label.new()
-	coach_label.position = Vector2(COACH_PANEL_PAD, 30)
-	coach_label.size = Vector2(COACH_PANEL_WIDTH - COACH_PANEL_PAD * 2.0, 90)
-	coach_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	coach_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	coach_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	UIStyles.apply_font(coach_label, UIStyles.FONT_SEMIBOLD, 40, UIStyles.TEXT)
-	coach_panel.add_child(coach_label)
-
-func show_coach_hint(coach_hint: Dictionary) -> void:
-	if coach_overlay == null:
-		return
-	coach_version += 1
-	coach_steps.clear()
-	if coach_hint.has("steps"):
-		for step in coach_hint["steps"] as Array:
-			coach_steps.append(step)
-	else:
-		coach_steps.append(coach_hint)
-	coach_step_index = 0
-	apply_coach_step()
-	coach_overlay.visible = true
-	coach_overlay.modulate.a = 0.0
-	var tween := coach_overlay.create_tween()
-	tween.tween_property(coach_overlay, "modulate:a", 1.0, 0.18).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-
-func apply_coach_step() -> void:
-	if coach_step_index < 0 or coach_step_index >= coach_steps.size():
-		hide_coach_hint()
-		return
-	var step: Dictionary = coach_steps[coach_step_index] as Dictionary
-	var area := str(step.get("area", "target"))
-	var rect := coach_rect_for_area(area)
-	if coach_dim_mask != null:
-		coach_dim_mask.set_holes(coach_holes_for_area(area, rect))
-	var text := Locale.t(str(step.get("key", "")), str(step.get("text", "")))
-	layout_coach_panel(text)
-	coach_panel.position = coach_panel_position_for_rect(rect)
-
-# Fit the tooltip to its (possibly wrapped) text so no line is clipped.
-func layout_coach_panel(text: String) -> void:
-	coach_label.text = text
-	var inner_w := COACH_PANEL_WIDTH - COACH_PANEL_PAD * 2.0
-	var text_h := UIStyles.FONT_SEMIBOLD.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_CENTER, inner_w, 40).y
-	var panel_h := clampf(text_h + 60.0, 132.0, 460.0)
-	coach_panel.size = Vector2(COACH_PANEL_WIDTH, panel_h)
-	coach_label.position = Vector2(COACH_PANEL_PAD, 30)
-	coach_label.size = Vector2(inner_w, panel_h - 60.0)
-
-func coach_dim_color() -> Color:
-	return Color(0.02, 0.012, 0.05, 0.62) if UIStyles.is_dark() else Color(0.03, 0.02, 0.08, 0.46)
-
-func coach_rim_color() -> Color:
-	# Subtle bright halo only in dark theme (where the dim reads weakly); light
-	# theme gets enough separation from the scrim alone.
-	return Color(1, 1, 1, 0.14) if UIStyles.is_dark() else Color(1, 1, 1, 0.0)
-
-func coach_holes_for_area(area: String, fallback: Rect2) -> Array[Dictionary]:
-	var holes: Array[Dictionary] = []
-	match area:
-		"none":
-			return holes
-		"center":
-			holes.append({"rect": fallback.grow(4), "radius": fallback.size.x * 0.5 + 4.0})
-		"orbit_buttons":
-			for orbit_rect in visible_orbit_button_rects(false):
-				holes.append({"rect": orbit_rect.grow(8), "radius": orbit_rect.size.x * 0.5 + 8.0})
-		"invalid_orbit":
-			for invalid_rect in visible_orbit_button_rects(true):
-				holes.append({"rect": invalid_rect.grow(8), "radius": invalid_rect.size.x * 0.5 + 8.0})
-		"target":
-			holes.append({"rect": fallback.grow(5), "radius": fallback.size.x * 0.5 + 5.0})
-		"op_add", "op_subtract", "op_multiply", "op_divide", "op_unavailable", "hint":
-			# Match the new pill roundness (chips/buttons use UIStyles.CORNER = 67).
-			holes.append({"rect": fallback.grow(6), "radius": float(UIStyles.CORNER) + 6.0})
-		_:
-			if fallback.size != Vector2.ZERO:
-				holes.append({"rect": fallback.grow(6), "radius": float(UIStyles.CORNER) + 6.0})
-	return holes
-
-func _on_coach_overlay_input(event: InputEvent) -> void:
-	var mouse_event := event as InputEventMouseButton
-	if mouse_event == null or not mouse_event.pressed:
-		return
-	coach_step_index += 1
-	if coach_step_index >= coach_steps.size():
-		hide_coach_hint()
-	else:
-		apply_coach_step()
-
-func fade_coach_overlay_out(version: int) -> void:
-	var fade := coach_overlay.create_tween()
-	fade.tween_property(coach_overlay, "modulate:a", 0.0, 0.22).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	await fade.finished
-	if version == coach_version:
-		coach_overlay.visible = false
-
-func hide_coach_hint() -> void:
-	coach_version += 1
-	if coach_overlay != null:
-		if coach_overlay.visible:
-			fade_coach_overlay_out(coach_version)
-		else:
-			coach_overlay.visible = false
-
-func coach_rect_for_area(area: String) -> Rect2:
-	match area:
-		"target":
-			if target_panel != null:
-				return Rect2(target_panel.position, target_panel.size)
-			return Rect2(Vector2(540, TOP_STATUS_Y + TOP_STATUS_SIZE.y * 0.5) - TARGET_BUBBLE_SIZE * 0.5, TARGET_BUBBLE_SIZE)
-		"center":
-			return Rect2(screen_center - Vector2(176, 176), Vector2(352, 352))
-		"orbit":
-			return Rect2(Vector2(100, 520), Vector2(880, 880))
-		"orbit_buttons":
-			return combined_rect(visible_orbit_button_rects(false), Rect2(Vector2(100, 520), Vector2(880, 880))).grow(12)
-		"invalid_orbit":
-			return combined_rect(visible_orbit_button_rects(true), Rect2(Vector2(100, 520), Vector2(880, 880))).grow(12)
-		"ops":
-			return Rect2(operation_legend.position, operation_legend.size)
-		"op_add":
-			return operation_card_rect(0)
-		"op_subtract":
-			return operation_card_rect(1)
-		"op_multiply":
-			return operation_card_rect(2)
-		"op_divide":
-			return operation_card_rect(3)
-		"op_unavailable":
-			return operation_card_rect(4)
-		"hint":
-			return Rect2(Vector2(70, ACTION_BUTTON_Y), Vector2(455, ACTION_BUTTON_HEIGHT))
-	return Rect2(Vector2(140, 152), Vector2(800, 88))
+func coach_context() -> Dictionary:
+	var op_rects: Array[Rect2] = []
+	for i in range(5):
+		op_rects.append(operation_card_rect(i))
+	return {
+		"screen_center": screen_center,
+		"target_rect": Rect2(target_panel.position, target_panel.size) if target_panel != null else Rect2(Vector2(540, TOP_STATUS_Y + TOP_STATUS_SIZE.y * 0.5) - TARGET_BUBBLE_SIZE * 0.5, TARGET_BUBBLE_SIZE),
+		"orbit_valid_rects": visible_orbit_button_rects(false),
+		"orbit_invalid_rects": visible_orbit_button_rects(true),
+		"orbit_fallback_rect": Rect2(Vector2(100, 520), Vector2(880, 880)),
+		"ops_rect": Rect2(operation_legend.position, operation_legend.size),
+		"op_rects": op_rects,
+		"hint_rect": Rect2(bulbs_button.position, bulbs_button.size) if bulbs_button != null else Rect2(Vector2(70, ACTION_BUTTON_Y), Vector2(455, ACTION_BUTTON_HEIGHT))
+	}
 
 func visible_orbit_button_rects(only_invalid: bool) -> Array[Rect2]:
 	var rects: Array[Rect2] = []
@@ -1303,14 +894,3 @@ func operation_card_rect(index: int) -> Rect2:
 		var local_rect: Rect2 = operation_legend.card_rect(index)
 		return Rect2(operation_legend.position + local_rect.position, local_rect.size)
 	return Rect2(operation_legend.position, Vector2(304, 74))
-
-func coach_panel_position_for_rect(rect: Rect2) -> Vector2:
-	var vp := coach_overlay.size if coach_overlay != null else Layout.viewport_size(self)
-	var margin := 45.0
-	var y := rect.position.y + rect.size.y + 28.0
-	# Prefer below the focus; flip above if it would run off the bottom.
-	if y + coach_panel.size.y > vp.y - 70.0:
-		y = rect.position.y - coach_panel.size.y - 28.0
-	y = clampf(y, 70.0, vp.y - coach_panel.size.y - 70.0)
-	var x := clampf(rect.get_center().x - coach_panel.size.x * 0.5, margin, vp.x - coach_panel.size.x - margin)
-	return Vector2(x, y)

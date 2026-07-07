@@ -138,20 +138,53 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	if logo_center == Vector2.ZERO:
 		return
-	var bob := sin(logo_time * 1.1) * 6.0
-	var c := logo_center + Vector2(0, bob)
+	var c := logo_center
+	# Proportions taken 1:1 from the design orb (viewBox 92, R30, stroke 7, dot 8),
+	# scaled to our canvas: R98, stroke 23 (~0.23R), dot 26 (~0.27R), a ~59° gap at
+	# the top-right with the dot centered in it.
 	var radius := 98.0
-	# Thinner ring (was 23) — the mockup logo is not as heavy.
-	var stroke := 16.0
-	# Open ring with a gap in the top-right; dot sits inside the gap.
-	var gap_center := -PI * 0.25          # top-right
-	var gap_half := 0.42
-	draw_arc(c, radius, gap_center + gap_half, gap_center - gap_half + TAU, 96, UIStyles.PURPLE, stroke, true)
-	# End caps (round) — small filled circles at the arc ends.
+	var stroke := 23.0
+	var dot_radius := 26.0
+	var gradient_axis := Vector2(1, 1).normalized()
+	var gradient_extent := radius + maxf(stroke * 0.5, dot_radius)
+	var rot := logo_time * (TAU / 24.0)
+	var gap_center := -PI * 0.25 + rot
+	var gap_half := 0.517
 	var a0 := gap_center + gap_half
 	var a1 := gap_center - gap_half + TAU
-	draw_circle(c + Vector2(cos(a0), sin(a0)) * radius, stroke * 0.5, UIStyles.PURPLE)
-	draw_circle(c + Vector2(cos(a1), sin(a1)) * radius, stroke * 0.5, UIStyles.PURPLE)
+	draw_logo_gradient_arc(c, radius, a0, a1, 128, stroke, gradient_axis, gradient_extent)
+	# End caps (round) — small filled circles at the arc ends.
+	var cap0 := c + Vector2(cos(a0), sin(a0)) * radius
+	var cap1 := c + Vector2(cos(a1), sin(a1)) * radius
+	draw_circle(cap0, stroke * 0.5, logo_gradient_color(cap0, c, gradient_axis, gradient_extent))
+	draw_circle(cap1, stroke * 0.5, logo_gradient_color(cap1, c, gradient_axis, gradient_extent))
 	# Dot inside the gap.
 	var dot_pos := c + Vector2(cos(gap_center), sin(gap_center)) * radius
-	draw_circle(dot_pos, 22.0, UIStyles.PURPLE_DARK)
+	draw_logo_gradient_circle(dot_pos, dot_radius, c, gradient_axis, gradient_extent)
+
+func draw_logo_gradient_arc(center: Vector2, radius: float, start_angle: float, end_angle: float, segments: int, width: float, gradient_axis: Vector2, gradient_extent: float) -> void:
+	var total: float = end_angle - start_angle
+	var count: int = max(1, segments)
+	var step: float = total / float(count)
+	for i in range(count):
+		var a0: float = start_angle + step * float(i)
+		var a1: float = start_angle + step * float(i + 1) + step * 0.12
+		var mid_angle := (a0 + a1) * 0.5
+		var mid_point := center + Vector2(cos(mid_angle), sin(mid_angle)) * radius
+		var color := logo_gradient_color(mid_point, center, gradient_axis, gradient_extent)
+		draw_arc(center, radius, a0, a1, 4, color, width, true)
+
+func draw_logo_gradient_circle(center: Vector2, radius: float, logo_center_ref: Vector2, gradient_axis: Vector2, gradient_extent: float) -> void:
+	var points := PackedVector2Array()
+	var colors := PackedColorArray()
+	var segments := 96
+	for i in range(segments):
+		var angle := TAU * float(i) / float(segments)
+		var point := center + Vector2(cos(angle), sin(angle)) * radius
+		points.append(point)
+		colors.append(logo_gradient_color(point, logo_center_ref, gradient_axis, gradient_extent))
+	draw_polygon(points, colors)
+
+func logo_gradient_color(point: Vector2, logo_center_ref: Vector2, gradient_axis: Vector2, gradient_extent: float) -> Color:
+	var t := clampf(0.5 + (point - logo_center_ref).dot(gradient_axis) / (gradient_extent * 2.0), 0.0, 1.0)
+	return UIStyles.PRIMARY_TOP.lerp(UIStyles.PRIMARY_BOTTOM, t)

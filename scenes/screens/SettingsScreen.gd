@@ -1,6 +1,8 @@
 class_name SettingsScreen
 extends Control
 
+const PopupFactoryScript = preload("res://scripts/ui/PopupFactory.gd")
+
 signal back_pressed
 signal volumes_changed(music_value: int, sound_value: int)
 signal reset_progress_requested
@@ -130,16 +132,9 @@ func _theme_segment(parent: Node, text: String, value: String, x: float, w: floa
 			seg.add_theme_stylebox_override("hover", style.duplicate())
 			seg.add_theme_stylebox_override("pressed", style.duplicate())
 		else:
-			# Light: white pill with a soft shadow (mockup), not the accent gradient.
 			var white := StyleBoxFlat.new()
 			white.bg_color = Color.WHITE
-			white.corner_radius_top_left = 67
-			white.corner_radius_top_right = 67
-			white.corner_radius_bottom_left = 67
-			white.corner_radius_bottom_right = 67
-			white.shadow_color = Color(0, 0, 0, 0.08)
-			white.shadow_size = 12
-			white.shadow_offset = Vector2(0, 5)
+			UIStyles._set_radius(white, 67)
 			seg.add_theme_stylebox_override("normal", white)
 			seg.add_theme_stylebox_override("hover", white.duplicate())
 			seg.add_theme_stylebox_override("pressed", white.duplicate())
@@ -204,30 +199,30 @@ func build_language_row(x: float, y: float, w: float) -> void:
 func build_language_popup() -> void:
 	language_popup = _make_scrim_popup()
 	var vp := Layout.viewport_size(self)
-	var pw := UIStyles.popup_width(vp.x)
+	var pw := PopupFactoryScript.popup_width(vp.x)
 	var langs: Array = Locale.available()
 	var opt_h := 188.0
 	var opt_gap := 34.0
 	var options_top := 290.0
 	var cancel_y := options_top + float(langs.size()) * (opt_h + opt_gap) - opt_gap + 74.0
-	var ph := cancel_y + UIStyles.POPUP_SECONDARY_H + 80.0
+	var ph := cancel_y + PopupFactoryScript.POPUP_SECONDARY_H + 80.0
 	var panel := Panel.new()
 	panel.position = Vector2((vp.x - pw) * 0.5, (vp.y - ph) * 0.5)
 	panel.size = Vector2(pw, ph)
-	panel.add_theme_stylebox_override("panel", UIStyles.popup_panel_style())
+	PopupFactoryScript.apply_panel_glass(panel)
 	language_popup.add_child(panel)
 
 	var globe: Texture2D = UIStyles.load_icon(UIStyles.GLOBE_PATH)
-	UIStyles.popup_badge(panel, pw, UIStyles.PRIMARY_TOP, UIStyles.PRIMARY_BOTTOM, globe if globe != null else UIStyles.ICON_INFO, 94.0)
-	UIStyles.popup_title(panel, pw, Locale.t("settings.language", "LANGUAGE"))
+	PopupFactoryScript.badge(panel, pw, UIStyles.PRIMARY_TOP, UIStyles.PRIMARY_BOTTOM, globe if globe != null else UIStyles.ICON_INFO, 94.0)
+	PopupFactoryScript.title(panel, pw, Locale.t("settings.language", "LANGUAGE"))
 
 	var ry := options_top
 	for entry in langs:
 		var code := str(entry["code"])
 		var selected := code == current_language
 		var opt := Button.new()
-		opt.position = Vector2(UIStyles.POPUP_PAD, ry)
-		opt.size = Vector2(pw - UIStyles.POPUP_PAD * 2.0, opt_h)
+		opt.position = Vector2(PopupFactoryScript.POPUP_PAD, ry)
+		opt.size = Vector2(pw - PopupFactoryScript.POPUP_PAD * 2.0, opt_h)
 		var style := _language_row_style(selected)
 		opt.add_theme_stylebox_override("normal", style)
 		opt.add_theme_stylebox_override("hover", style.duplicate())
@@ -253,7 +248,7 @@ func build_language_popup() -> void:
 			UIStyles.icon(UIStyles.ICON_CHECK, opt, Vector2(opt.size.x - 127, opt_h * 0.5 - 30), Vector2(60, 60), check_color)
 		ry += opt_h + opt_gap
 
-	var cancel := UIStyles.popup_secondary_button(Locale.t("common.cancel", "Cancel"), pw, cancel_y)
+	var cancel := PopupFactoryScript.secondary_button(Locale.t("common.cancel", "Cancel"), pw, cancel_y)
 	cancel.pressed.connect(func(): language_popup.visible = false)
 	panel.add_child(cancel)
 
@@ -273,14 +268,8 @@ func _language_row_style(selected: bool) -> StyleBoxFlat:
 		else:
 			s.bg_color = Color(0.106, 0.071, 0.2, 0.04)
 			s.border_color = Color(0.106, 0.071, 0.2, 0.08)
-	s.border_width_left = 3
-	s.border_width_right = 3
-	s.border_width_top = 3
-	s.border_width_bottom = 3
-	s.corner_radius_top_left = 60
-	s.corner_radius_top_right = 60
-	s.corner_radius_bottom_left = 60
-	s.corner_radius_bottom_right = 60
+	UIStyles._set_border(s, 3)
+	UIStyles._set_radius(s, 60)
 	return s
 
 func show_language_popup() -> void:
@@ -300,43 +289,34 @@ func _make_scrim_popup() -> Control:
 	popup.visible = false
 	popup.z_index = 100
 	add_child(popup)
-	var overlay := ColorRect.new()
-	overlay.position = Vector2.ZERO
-	overlay.size = popup.size
-	overlay.color = Color(0.03, 0.02, 0.08, 0.55)
-	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	overlay.gui_input.connect(func(event: InputEvent):
-		var mb := event as InputEventMouseButton
-		if mb != null and mb.pressed:
-			popup.visible = false
-	)
+	var overlay := PopupFactoryScript.scrim(popup.size, func() -> void: popup.visible = false)
 	popup.add_child(overlay)
 	return popup
 
 func build_reset_popup() -> void:
 	reset_popup = _make_scrim_popup()
 	var vp := Layout.viewport_size(self)
-	var pw := UIStyles.popup_width(vp.x)
+	var pw := PopupFactoryScript.popup_width(vp.x)
 	var ph := 983.0
 	var panel := Panel.new()
 	panel.position = Vector2((vp.x - pw) * 0.5, (vp.y - ph) * 0.5)
 	panel.size = Vector2(pw, ph)
-	panel.add_theme_stylebox_override("panel", UIStyles.popup_panel_style())
+	PopupFactoryScript.apply_panel_glass(panel)
 	reset_popup.add_child(panel)
 
 	var warn: Texture2D = UIStyles.load_icon(UIStyles.WARNING_CIRCLE_PATH)
-	UIStyles.popup_badge(panel, pw, Color("#FF9B96"), Color("#E0453F"), warn if warn != null else UIStyles.ICON_INFO, 94.0)
-	UIStyles.popup_title(panel, pw, Locale.t("settings.reset.title", "Reset Progress"))
-	UIStyles.popup_body(panel, pw, Locale.t("settings.reset.body", "This will erase your progress, stars, bulbs and unlocked levels. This cannot be undone."), 268.0)
+	PopupFactoryScript.badge(panel, pw, Color("#FF9B96"), Color("#E0453F"), warn if warn != null else UIStyles.ICON_INFO, 94.0)
+	PopupFactoryScript.title(panel, pw, Locale.t("settings.reset.title", "Reset Progress"))
+	PopupFactoryScript.body(panel, pw, Locale.t("settings.reset.body", "This will erase your progress, stars, bulbs and unlocked levels. This cannot be undone."), 268.0)
 
-	var confirm_btn := UIStyles.popup_primary_button(Locale.t("settings.reset.confirm", "Reset Progress"), pw, 500.0, true)
+	var confirm_btn := PopupFactoryScript.primary_button(Locale.t("settings.reset.confirm", "Reset Progress"), pw, 500.0, true)
 	confirm_btn.pressed.connect(func():
 		reset_popup.visible = false
 		reset_progress_requested.emit()
 	)
 	panel.add_child(confirm_btn)
 
-	var cancel_btn := UIStyles.popup_secondary_button(Locale.t("common.cancel", "Cancel"), pw, 735.0)
+	var cancel_btn := PopupFactoryScript.secondary_button(Locale.t("common.cancel", "Cancel"), pw, 735.0)
 	cancel_btn.pressed.connect(func(): reset_popup.visible = false)
 	panel.add_child(cancel_btn)
 
@@ -385,15 +365,18 @@ func add_slider_block(parent: Control, text: String, _icon_texture: Texture2D, v
 	track_fill.position = Vector2(track_x, track_y)
 	track_fill.size = Vector2(track_width * float(value) / 100.0, 20)
 	track_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	track_fill.add_theme_stylebox_override("panel", slider_track_style(UIStyles.PURPLE, 10))
+	track_fill.add_theme_stylebox_override("panel", slider_gradient_track_style(Vector2i(int(track_width), 20), 10))
 	parent.add_child(track_fill)
 
 	var knob := Panel.new()
 	knob.size = Vector2(80, 80)
 	knob.position = Vector2(track_x + track_fill.size.x - knob.size.x * 0.5, track_y - 30)
+	knob.pivot_offset = knob.size * 0.5
 	knob.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	knob.add_theme_stylebox_override("panel", slider_knob_style())
 	parent.add_child(knob)
+	var knob_hover := slider_knob_hover()
+	knob.add_child(knob_hover)
 
 	var slider := HSlider.new()
 	slider.min_value = 0
@@ -404,42 +387,81 @@ func add_slider_block(parent: Control, text: String, _icon_texture: Texture2D, v
 	slider.modulate = Color(1, 1, 1, 0)
 	parent.add_child(slider)
 	slider.value_changed.connect(_on_slider_value_changed.bind(value_lbl, track_fill, knob, track_width, key))
+	slider.gui_input.connect(_on_slider_input.bind(knob))
+	UIStyles.attach_hover_tint(slider, knob_hover)
+	slider.drag_started.connect(func() -> void: _set_slider_press_state(knob, true, true))
+	slider.drag_ended.connect(func(_value_changed: bool) -> void: _set_slider_press_state(knob, false, false))
 
 func slider_track_style(color: Color, radius: int) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = color
-	style.corner_radius_top_left = radius
-	style.corner_radius_top_right = radius
-	style.corner_radius_bottom_left = radius
-	style.corner_radius_bottom_right = radius
+	UIStyles._set_radius(style, radius)
 	return style
 
+func slider_gradient_track_style(texture_size: Vector2i, radius: int) -> StyleBoxTexture:
+	var safe_size := Vector2i(maxi(1, texture_size.x), maxi(1, texture_size.y))
+	return UIStyles.gradient_style(UIStyles.PRIMARY_TOP, UIStyles.PRIMARY_BOTTOM, radius, safe_size)
+
 func slider_knob_style() -> StyleBoxFlat:
-	# Mockup: 80px white knob, no border, soft purple glow (0 7px 27px @35%).
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color.WHITE
-	style.corner_radius_top_left = 40
-	style.corner_radius_top_right = 40
-	style.corner_radius_bottom_left = 40
-	style.corner_radius_bottom_right = 40
-	# Light: purple glow (0 7px 27px @35%). Dark: soft black drop (0 7px 34px @40%).
-	if UIStyles.is_dark():
-		style.shadow_color = Color(0, 0, 0, 0.40)
-		style.shadow_size = 20
-		style.shadow_offset = Vector2(0, 6)
-	else:
-		style.shadow_color = Color(0.356, 0.196, 0.768, 0.35)
-		style.shadow_size = 16
-		style.shadow_offset = Vector2(0, 6)
+	UIStyles._set_radius(style, 40)
+	style.shadow_color = Color(0, 0, 0, 0.18)
+	style.shadow_size = 10
+	style.shadow_offset = Vector2(0, 4)
 	return style
+
+func slider_knob_hover() -> Panel:
+	var overlay := Panel.new()
+	overlay.position = Vector2.ZERO
+	overlay.size = Vector2(80, 80)
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.modulate.a = 0.0
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(1, 1, 1) if UIStyles.is_dark() else Color(0, 0, 0)
+	UIStyles._set_radius(style, 40)
+	overlay.add_theme_stylebox_override("panel", style)
+	return overlay
+
+func _on_slider_input(event: InputEvent, knob: Panel) -> void:
+	var mouse_button := event as InputEventMouseButton
+	if mouse_button != null and mouse_button.button_index == MOUSE_BUTTON_LEFT:
+		_set_slider_press_state(knob, mouse_button.pressed, false)
+		return
+
+	var motion := event as InputEventMouseMotion
+	if motion != null and bool(knob.get_meta("slider_pressed", false)):
+		knob.set_meta("slider_dragging", true)
+
+func _set_slider_press_state(knob: Panel, pressed: bool, dragging: bool) -> void:
+	if knob == null or not is_instance_valid(knob):
+		return
+	var was_pressed := bool(knob.get_meta("slider_pressed", false))
+	knob.set_meta("slider_pressed", pressed)
+	knob.set_meta("slider_dragging", dragging if pressed else false)
+	if was_pressed != pressed:
+		UIStyles.press_hold(knob, pressed)
 
 func _on_slider_value_changed(value: float, value_label: Label, fill: Panel, knob: Panel, track_width: float, key: String) -> void:
 	value_label.text = "%d%%" % int(round(value))
 	var fill_width: float = track_width * clamp(value, 0.0, 100.0) / 100.0
-	fill.size = Vector2(fill_width, fill.size.y)
-	knob.position = Vector2(fill.position.x + fill_width - knob.size.x * 0.5, knob.position.y)
+	animate_slider_visual(fill, knob, fill_width)
 	if key == "music":
 		music_volume = int(round(value))
 	else:
 		sound_volume = int(round(value))
 	volumes_changed.emit(music_volume, sound_volume)
+
+func animate_slider_visual(fill: Panel, knob: Panel, fill_width: float) -> void:
+	var duration := 0.07 if bool(knob.get_meta("slider_dragging", false)) else 0.16
+	var target_fill_size := Vector2(fill_width, fill.size.y)
+	var target_knob_x := fill.position.x + fill_width - knob.size.x * 0.5
+	if knob.has_meta("slider_visual_tween"):
+		var current_tween := knob.get_meta("slider_visual_tween") as Tween
+		if current_tween != null and current_tween.is_valid():
+			current_tween.kill()
+	var tween := knob.create_tween()
+	knob.set_meta("slider_visual_tween", tween)
+	tween.set_parallel(true)
+	tween.tween_property(fill, "size", target_fill_size, duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(knob, "position:x", target_knob_x, duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
