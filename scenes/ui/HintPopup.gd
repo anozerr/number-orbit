@@ -27,13 +27,15 @@ func build(viewport_width: float) -> void:
 	z_index = 100
 	visible = false
 
-	overlay = PopupFactoryScript.scrim(Vector2.ZERO)
+	overlay = PopupFactoryScript.scrim(Vector2.ZERO, func() -> void: hide_popup())
 	add_child(overlay)
 
 	var pw := PopupFactoryScript.popup_width(viewport_width)
 	panel = Panel.new()
+	panel.name = "PopupPanel"
 	panel.size = Vector2(pw, 1003)
 	PopupFactoryScript.apply_panel_glass(panel)
+	PopupFactoryScript.register_sheet_panel(panel)
 	add_child(panel)
 
 	PopupFactoryScript.badge(panel, pw, Color("#FFD98F"), Color("#F5A93D"), UIStyles.ICON_BULB, 101.0)
@@ -73,7 +75,7 @@ func build(viewport_width: float) -> void:
 	panel.add_child(ad_button)
 
 	cancel_button = PopupFactoryScript.secondary_button(Locale.t("common.cancel", "Cancel"), pw, 755.0)
-	cancel_button.pressed.connect(func(): visible = false)
+	cancel_button.pressed.connect(func(): hide_popup())
 	panel.add_child(cancel_button)
 
 func configure_state(moves: int, hint_points: int) -> void:
@@ -89,6 +91,7 @@ func layout_to_viewport(viewport_size: Vector2) -> void:
 		overlay.size = viewport_size
 	if panel != null:
 		panel.position = (viewport_size - panel.size) * 0.5
+		PopupFactoryScript.register_sheet_panel(panel)
 
 func show_prompt() -> void:
 	reset_layout()
@@ -105,7 +108,7 @@ func show_prompt() -> void:
 		buy_button.visible = true
 		ad_button.visible = false
 		cancel_button.text = Locale.t("common.cancel", "Cancel")
-	visible = true
+	PopupFactoryScript.show_sheet(self, panel, overlay)
 
 func show_result(message: String, balance: int) -> void:
 	current_hint_points = balance
@@ -117,7 +120,7 @@ func show_result(message: String, balance: int) -> void:
 	buy_button.visible = false
 	ad_button.visible = false
 	cancel_button.text = Locale.t("common.back", "Back")
-	visible = true
+	PopupFactoryScript.show_sheet(self, panel, overlay)
 
 func show_insufficient_balance(balance: int) -> void:
 	current_hint_points = balance
@@ -130,7 +133,7 @@ func show_insufficient_balance(balance: int) -> void:
 	buy_button.visible = false
 	ad_button.visible = true
 	cancel_button.text = Locale.t("common.cancel", "Cancel")
-	visible = true
+	PopupFactoryScript.show_sheet(self, panel, overlay)
 
 func reset_layout() -> void:
 	var pw := panel.size.x
@@ -210,4 +213,12 @@ func hide_move_circle() -> void:
 func clear_cache() -> void:
 	cached_popup_hint_text = ""
 	cached_popup_move_index = -1
-	visible = false
+	hide_popup()
+
+func hide_popup(after_hidden: Callable = Callable()) -> void:
+	if panel != null:
+		PopupFactoryScript.hide_sheet(self, panel, overlay, after_hidden)
+	else:
+		visible = false
+		if after_hidden.is_valid():
+			after_hidden.call()

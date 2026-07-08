@@ -12,8 +12,16 @@ const POPUP_SECONDARY_H := 168.0
 const BADGE_SHADOW := Color(0, 0, 0, 0.10)
 const PANEL_BLUR_PX := 52.0
 const PANEL_BLUR_LOD := 5.2
-const SCRIM_TINT_LIGHT := Color(0.03, 0.02, 0.08, 0.34)
-const SCRIM_TINT_DARK := Color(0.03, 0.02, 0.08, 0.52)
+const SCRIM_TINT_LIGHT := Color(15.0 / 255.0, 10.0 / 255.0, 30.0 / 255.0, 0.28)
+const SCRIM_TINT_DARK := Color(0, 0, 0, 0.50)
+const SHEET_OPEN_DURATION := 0.32
+const SHEET_CLOSE_DURATION := 0.28
+const SCRIM_OPEN_DURATION := 0.30
+const SHEET_START_OFFSET := 46.0
+const SHEET_START_SCALE := 0.94
+const SHEET_HOME_META := "popup_sheet_home"
+const SHEET_TWEEN_META := "popup_sheet_tween"
+const SHEET_HIDING_META := "popup_sheet_hiding"
 
 static var _panel_shader: Shader
 
@@ -22,6 +30,7 @@ static func popup_width(viewport_width: float) -> float:
 
 static func scrim(viewport_size: Vector2, close_callback: Callable = Callable(), tint_override: Color = Color.TRANSPARENT) -> ColorRect:
 	var overlay := ColorRect.new()
+	overlay.name = "PopupScrim"
 	overlay.position = Vector2.ZERO
 	overlay.size = viewport_size
 	overlay.color = tint_override if tint_override != Color.TRANSPARENT else scrim_tint()
@@ -36,6 +45,156 @@ static func scrim(viewport_size: Vector2, close_callback: Callable = Callable(),
 
 static func scrim_tint() -> Color:
 	return SCRIM_TINT_DARK if UIStyles.is_dark() else SCRIM_TINT_LIGHT
+
+static func register_sheet_panel(panel: Control) -> void:
+	if not is_instance_valid(panel):
+		return
+	panel.set_meta(SHEET_HOME_META, panel.position)
+	panel.pivot_offset = panel.size * 0.5
+
+static func find_scrim(root: Control) -> ColorRect:
+	if not is_instance_valid(root):
+		return null
+	var node := root.get_node_or_null("PopupScrim")
+	return node as ColorRect
+
+static func show_sheet(root: Control, panel: Control, overlay: CanvasItem = null) -> void:
+	if not is_instance_valid(root) or not is_instance_valid(panel):
+		return
+	var home := _sheet_home(panel)
+	var hiding := root.has_meta(SHEET_HIDING_META) and bool(root.get_meta(SHEET_HIDING_META))
+	if root.visible and not hiding:
+		_kill_sheet_tween(root)
+		_apply_sheet_progress(panel, home, 1.0)
+		if is_instance_valid(overlay):
+			overlay.modulate.a = 1.0
+		return
+
+	_kill_sheet_tween(root)
+	root.visible = true
+	root.set_meta(SHEET_HIDING_META, false)
+	_apply_sheet_progress(panel, home, 0.0)
+	if is_instance_valid(overlay):
+		overlay.modulate.a = 0.0
+
+	var tween := root.create_tween()
+	root.set_meta(SHEET_TWEEN_META, tween)
+	var animate_panel := func(raw_t: float) -> void:
+		_apply_sheet_progress(panel, home, _sheet_ease(raw_t))
+	if is_instance_valid(overlay):
+		tween.tween_property(overlay, "modulate:a", 1.0, SCRIM_OPEN_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		tween.parallel().tween_method(animate_panel, 0.0, 1.0, SHEET_OPEN_DURATION)
+	else:
+		tween.tween_method(animate_panel, 0.0, 1.0, SHEET_OPEN_DURATION)
+	tween.finished.connect(func() -> void:
+		if is_instance_valid(root):
+			root.remove_meta(SHEET_TWEEN_META)
+	)
+
+static func show_sheet_immediate(root: Control, panel: Control, overlay: CanvasItem = null) -> void:
+	if not is_instance_valid(root) or not is_instance_valid(panel):
+		return
+	_kill_sheet_tween(root)
+	root.visible = true
+	root.set_meta(SHEET_HIDING_META, false)
+	_apply_sheet_progress(panel, _sheet_home(panel), 1.0)
+	if is_instance_valid(overlay):
+		overlay.modulate.a = 1.0
+
+static func hide_sheet(root: Control, panel: Control, overlay: CanvasItem = null, after_hidden: Callable = Callable()) -> void:
+	if not is_instance_valid(root) or not is_instance_valid(panel):
+		if after_hidden.is_valid():
+			after_hidden.call()
+		return
+	if not root.visible:
+		if after_hidden.is_valid():
+			after_hidden.call()
+		return
+
+	_kill_sheet_tween(root)
+	root.set_meta(SHEET_HIDING_META, true)
+	var home := _sheet_home(panel)
+	var start_position := panel.position
+	var start_scale := panel.scale
+	var start_alpha := panel.modulate.a
+	var end_position := home + Vector2(0, SHEET_START_OFFSET)
+	var end_scale := Vector2(SHEET_START_SCALE, SHEET_START_SCALE)
+
+	var tween := root.create_tween()
+	root.set_meta(SHEET_TWEEN_META, tween)
+	var animate_panel := func(raw_t: float) -> void:
+		var eased := _sheet_ease(raw_t)
+		panel.position = start_position.lerp(end_position, eased)
+		panel.scale = start_scale.lerp(end_scale, eased)
+		panel.modulate.a = lerpf(start_alpha, 0.0, eased)
+	if is_instance_valid(overlay):
+		tween.tween_property(overlay, "modulate:a", 0.0, SHEET_CLOSE_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+		tween.parallel().tween_method(animate_panel, 0.0, 1.0, SHEET_CLOSE_DURATION)
+	else:
+		tween.tween_method(animate_panel, 0.0, 1.0, SHEET_CLOSE_DURATION)
+	tween.finished.connect(func() -> void:
+		if not is_instance_valid(root):
+			return
+		root.visible = false
+		root.set_meta(SHEET_HIDING_META, false)
+		root.remove_meta(SHEET_TWEEN_META)
+		_apply_sheet_progress(panel, home, 0.0)
+		if is_instance_valid(overlay):
+			overlay.modulate.a = 0.0
+		if after_hidden.is_valid():
+			after_hidden.call()
+	)
+
+static func _sheet_home(panel: Control) -> Vector2:
+	if panel.has_meta(SHEET_HOME_META):
+		var value = panel.get_meta(SHEET_HOME_META)
+		if value is Vector2:
+			return value
+	register_sheet_panel(panel)
+	return panel.position
+
+static func _apply_sheet_progress(panel: Control, home: Vector2, progress: float) -> void:
+	if not is_instance_valid(panel):
+		return
+	var p := clampf(progress, 0.0, 1.0)
+	var scale_value := lerpf(SHEET_START_SCALE, 1.0, p)
+	panel.pivot_offset = panel.size * 0.5
+	panel.position = home + Vector2(0, lerpf(SHEET_START_OFFSET, 0.0, p))
+	panel.scale = Vector2(scale_value, scale_value)
+	panel.modulate.a = p
+
+static func _kill_sheet_tween(root: Control) -> void:
+	if not is_instance_valid(root) or not root.has_meta(SHEET_TWEEN_META):
+		return
+	var maybe_tween = root.get_meta(SHEET_TWEEN_META)
+	if maybe_tween is Tween:
+		(maybe_tween as Tween).kill()
+	root.remove_meta(SHEET_TWEEN_META)
+
+static func _sheet_ease(x: float) -> float:
+	return _bezier_y_at_x(clampf(x, 0.0, 1.0), 0.28, 0.85, 0.35, 1.0)
+
+static func _bezier_y_at_x(x: float, x1: float, y1: float, x2: float, y2: float) -> float:
+	var t := x
+	for _i in range(8):
+		var estimate := _bezier_value(t, x1, x2) - x
+		var slope := _bezier_slope(t, x1, x2)
+		if abs(slope) < 0.00001:
+			break
+		t = clampf(t - estimate / slope, 0.0, 1.0)
+	return _bezier_value(t, y1, y2)
+
+static func _bezier_value(t: float, p1: float, p2: float) -> float:
+	var c := 3.0 * p1
+	var b := 3.0 * (p2 - p1) - c
+	var a := 1.0 - c - b
+	return ((a * t + b) * t + c) * t
+
+static func _bezier_slope(t: float, p1: float, p2: float) -> float:
+	var c := 3.0 * p1
+	var b := 3.0 * (p2 - p1) - c
+	var a := 1.0 - c - b
+	return (3.0 * a * t + 2.0 * b) * t + c
 
 static func apply_panel_glass(panel: Panel) -> void:
 	panel.add_theme_stylebox_override("panel", panel_style())

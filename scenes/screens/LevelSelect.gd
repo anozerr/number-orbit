@@ -9,6 +9,7 @@ signal level_selected(level_number: int)
 signal unlock_with_ad_requested(level_number: int)
 
 var locked_popup: Control
+var locked_popup_panel: Panel
 var locked_popup_body: Label
 var locked_popup_ad_button: Button
 var locked_popup_close_button: Button
@@ -22,6 +23,9 @@ var content_width := 940.0
 # offset by GRID_PAD. TOP_PAD gives the first row room.
 const GRID_PAD := 30.0
 const TOP_PAD := 16.0
+const LEVEL_STAR_SIZE := 42.0
+const LEVEL_STAR_SPACING := 7.0
+const LEVEL_STAR_Y_RATIO := 0.65
 # Length of the top/bottom dissolve. The scroll viewport extends this far BELOW
 # the unified bottom line so a row is still fully opaque AT the line and only
 # fades past it (fade completing on the line made the page look shorter).
@@ -291,8 +295,8 @@ func build_level_chip(parent: Control, pos: Vector2, chip_size: Vector2, global_
 	if unlocked:
 		var stars := Control.new()
 		stars.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		stars.position = Vector2(0, chip_size.y * 0.66)
-		stars.size = Vector2(chip_size.x, 34)
+		stars.position = Vector2(0, chip_size.y * LEVEL_STAR_Y_RATIO)
+		stars.size = Vector2(chip_size.x, LEVEL_STAR_SIZE)
 		btn.add_child(stars)
 		add_star_icons(stars, rating)
 	else:
@@ -324,14 +328,15 @@ func style_level_chip(button: Button, completed: bool, unlocked: bool, diff_colo
 	button.add_theme_stylebox_override("disabled", normal.duplicate())
 
 func add_star_icons(parent: Control, count: int) -> void:
-	var icon_size := Vector2(30, 30)
-	var spacing := 8.0
+	var icon_size := Vector2(LEVEL_STAR_SIZE, LEVEL_STAR_SIZE)
+	var spacing := LEVEL_STAR_SPACING
 	var step := icon_size.x + spacing
 	var start_x: float = (parent.size.x - icon_size.x * 3.0 - spacing * 2.0) * 0.5
+	var y := (parent.size.y - icon_size.y) * 0.5
 	for i in range(3):
 		var texture: Texture2D = UIStyles.ICON_LEVEL_STAR if i < count else UIStyles.ICON_LEVEL_STAR_EMPTY
 		var color: Color = UIStyles.GOLD if i < count else UIStyles.STAR_EMPTY
-		UIStyles.icon(texture, parent, Vector2(start_x + i * step, 2), icon_size, color)
+		UIStyles.icon(texture, parent, Vector2(start_x + i * step, y), icon_size, color)
 
 func section_color(index: int) -> Color:
 	if index >= 0 and index < LevelData.DIFFICULTIES.size():
@@ -384,6 +389,7 @@ func row_center_for_level(level_number: int) -> float:
 func build_locked_level_popup() -> void:
 	if is_instance_valid(locked_popup):
 		locked_popup.queue_free()
+	locked_popup_panel = null
 
 	locked_popup = Control.new()
 	# Explicit size — anchored presets collapse to zero under this screen.
@@ -400,9 +406,12 @@ func build_locked_level_popup() -> void:
 	var pw := PopupFactoryScript.popup_width(vp.x)
 	var ph := 983.0
 	var panel := Panel.new()
+	panel.name = "PopupPanel"
 	panel.position = Vector2((vp.x - pw) * 0.5, (vp.y - ph) * 0.5)
 	panel.size = Vector2(pw, ph)
 	PopupFactoryScript.apply_panel_glass(panel)
+	PopupFactoryScript.register_sheet_panel(panel)
+	locked_popup_panel = panel
 	locked_popup.add_child(panel)
 
 	PopupFactoryScript.badge(panel, pw, Color("#B79CFF"), Color("#5B32C4"), UIStyles.ICON_LOCK, 87.0)
@@ -424,8 +433,8 @@ func show_locked_level_popup(level_number: int, can_watch_ad: bool) -> void:
 	locked_popup_level_number = level_number
 	locked_popup_body.text = Locale.t("levels.locked.body", "Complete the previous level%s to open it.") % (Locale.t("levels.locked.or_ad", " or watch an ad") if can_watch_ad else "")
 	locked_popup_ad_button.visible = can_watch_ad
-	locked_popup.visible = true
+	PopupFactoryScript.show_sheet(locked_popup, locked_popup_panel, PopupFactoryScript.find_scrim(locked_popup))
 
 func hide_locked_level_popup() -> void:
-	if is_instance_valid(locked_popup):
-		locked_popup.visible = false
+	if is_instance_valid(locked_popup) and is_instance_valid(locked_popup_panel):
+		PopupFactoryScript.hide_sheet(locked_popup, locked_popup_panel, PopupFactoryScript.find_scrim(locked_popup))

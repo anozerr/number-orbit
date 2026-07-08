@@ -79,7 +79,7 @@ static func get_tutorial_levels() -> Array:
 			"tutorial_multiply", "TUTORIAL: MULTIPLY", 2, [2, 3, 4], ["multiply"],
 			items([3, "multiply"], [4, "multiply"]), items([5, "multiply"]),
 			"Red numbers multiply the center.",
-			"Order still matters — choose well.",
+			"Choose the multiplier that reaches the target.",
 			[
 				{"area": "op_multiply", "key": "coach.multiply.op", "text": "Red means Multiply — a small number can grow fast."},
 				{"area": "orbit_buttons", "key": "coach.multiply.orbit", "text": "Multiply carefully: one wrong tap can overshoot the target."}

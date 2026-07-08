@@ -36,6 +36,8 @@ const CENTER_CIRCLE_DIAMETER := 335
 const CENTER_CIRCLE_RADIUS := CENTER_CIRCLE_DIAMETER * 0.5
 
 var center_label: Label
+var center_panel: Control
+var center_circle: TextureRect
 var level_label: Label
 var level_bg: Panel
 var moves_bg: Panel
@@ -58,6 +60,8 @@ var operation_legend: OperationLegend
 var orbit: Node2D
 var center_circle_texture: Texture2D
 var orbit_angle := 0.0
+var orbit_spin_factor := 1.0
+var orbit_spin_tween: Tween
 var last_center_number: int = -999999
 var level_failed: bool = false
 var current_number_value: int = 0
@@ -156,7 +160,7 @@ func _apply_layout() -> void:
 	var max_r_w := center_x - Layout.SIDE_MARGIN - sat_half
 	var max_r_v := (orbit_bottom - orbit_top) * 0.5 - sat_half
 	orbit_radius = maxf(300.0, minf(max_r_w, max_r_v))
-	center_label.position = screen_center - Vector2(245, 90)
+	center_panel.position = screen_center - Vector2(CENTER_CIRCLE_RADIUS, CENTER_CIRCLE_RADIUS)
 
 	# Full-screen overlays cover the whole viewport.
 	if hint_popup != null:
@@ -173,13 +177,31 @@ func build() -> void:
 	# PRIMARY_TOP→PRIMARY_BOTTOM gradient.
 	center_circle_texture = UIStyles.circle_gradient_texture(CENTER_CIRCLE_DIAMETER, UIStyles.PRIMARY_TOP, UIStyles.PRIMARY_BOTTOM)
 
+	center_panel = Control.new()
+	center_panel.size = Vector2(CENTER_CIRCLE_DIAMETER, CENTER_CIRCLE_DIAMETER)
+	center_panel.position = screen_center - Vector2(CENTER_CIRCLE_RADIUS, CENTER_CIRCLE_RADIUS)
+	center_panel.pivot_offset = center_panel.size * 0.5
+	center_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(center_panel)
+	center_panel.gui_input.connect(_on_center_panel_input)
+	center_panel.mouse_exited.connect(func() -> void: UIStyles.press_hold(center_panel, false))
+
+	center_circle = TextureRect.new()
+	center_circle.position = Vector2.ZERO
+	center_circle.size = center_panel.size
+	center_circle.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center_circle.texture = center_circle_texture
+	center_circle.stretch_mode = TextureRect.STRETCH_SCALE
+	center_panel.add_child(center_circle)
+
 	center_label = Label.new()
-	center_label.position = screen_center - Vector2(245, 90)
+	center_label.position = Vector2((CENTER_CIRCLE_DIAMETER - 490) * 0.5, (CENTER_CIRCLE_DIAMETER - 180) * 0.5)
 	center_label.size = Vector2(490, 180)
 	center_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	center_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	UIStyles.apply_font(center_label, UIStyles.FONT_EXTRABOLD, 101, Color.WHITE)
-	add_child(center_label)
+	center_panel.add_child(center_label)
 
 	# The status pill is TWO independent, self-contained blocks — LEVEL (left) and
 	# MOVES (right). Each is a half-width rounded panel whose inner edge is a
@@ -222,10 +244,12 @@ func build() -> void:
 	target_panel = Control.new()
 	target_panel.position = Vector2(603, TOP_STATUS_Y + TOP_STATUS_SIZE.y * 0.5) - TARGET_BUBBLE_SIZE * 0.5
 	target_panel.size = TARGET_BUBBLE_SIZE
+	target_panel.pivot_offset = target_panel.size * 0.5
 	target_panel.z_index = 6
 	target_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(target_panel)
 	target_panel.gui_input.connect(_on_goal_panel_input)
+	target_panel.mouse_exited.connect(func() -> void: UIStyles.press_hold(target_panel, false))
 
 	target_circle = TextureRect.new()
 	target_circle.position = Vector2.ZERO
@@ -341,6 +365,8 @@ void fragment() {
 	coach_overlay = CoachOverlayScript.new()
 	add_child(coach_overlay)
 	coach_overlay.build()
+	coach_overlay.connect("showing_started", _on_coach_showing_started)
+	coach_overlay.connect("hiding_started", _on_coach_hiding_started)
 	_apply_layout()
 
 func configure(title_text: String, current_number: int, target_number: int, moves: int, thresholds: Array, star_bands: Array, orbit_items: Array, allowed_ops: Array, failed: bool, hint_points: int, tutorial: bool = false, tutorial_help: String = "", coach_hint: Dictionary = {}) -> void:
@@ -417,9 +443,23 @@ func _on_level_panel_input(event: InputEvent) -> void:
 
 func _on_goal_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
-	if mouse_event != null and mouse_event.pressed:
-		pop_goal_panel()
+	if mouse_event == null or mouse_event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if mouse_event.pressed:
+		UIStyles.press_hold(target_panel, true)
 		show_temporary_help(Locale.t("game.tap.target", "Reach %d using orbit numbers.") % current_target_value, false)
+	else:
+		UIStyles.press_hold(target_panel, false)
+
+func _on_center_panel_input(event: InputEvent) -> void:
+	var mouse_event := event as InputEventMouseButton
+	if mouse_event == null or mouse_event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if mouse_event.pressed:
+		UIStyles.press_hold(center_panel, true)
+		show_temporary_help(Locale.t("game.tap.center", "Your number. Moves change it."), false)
+	else:
+		UIStyles.press_hold(center_panel, false)
 
 func star_requirements_text() -> String:
 	if current_star_bands.is_empty() and current_thresholds.size() < 3:
@@ -506,12 +546,37 @@ func show_temporary_help(text: String, _error: bool = false) -> void:
 func set_info_default(text: String, error: bool) -> void:
 	var changed := text != info_default_text
 	info_default_text = text
+	if current_moves == 0 or tutorial_help_label.text == "":
+		info_temp_active = false
+		set_info_immediate(text, error)
+		return
 	if changed or info_temp_active:
 		info_temp_active = false
 		_play_info_marquee(text, false, error)
 
+func set_info_immediate(text: String, error: bool) -> void:
+	if tutorial_help_label == null:
+		return
+	info_marquee_version += 1
+	if info_marquee_tween != null and info_marquee_tween.is_valid():
+		info_marquee_tween.kill()
+	apply_info_line_style(error)
+	var new_w := _info_text_width(text)
+	tutorial_help_label.text = text
+	tutorial_help_label.size = Vector2(new_w, INFO_LINE_SIZE.y)
+	tutorial_help_label.position.x = _info_rest_x_for_width(new_w)
+
 func _info_text_width(text: String) -> float:
 	return UIStyles.FONT_MEDIUM.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 40).x
+
+func _info_rest_x_for_width(text_width: float) -> float:
+	if info_clip == null:
+		return INFO_REST_X
+	var readable_left := INFO_FADE_PX
+	var readable_w := maxf(0.0, info_clip.size.x - INFO_FADE_PX * 2.0)
+	if text_width <= readable_w:
+		return readable_left + (readable_w - text_width) * 0.5
+	return readable_left
 
 func _play_info_marquee(text: String, temp: bool, error: bool) -> void:
 	if info_clip == null:
@@ -537,8 +602,8 @@ func _play_info_marquee(text: String, temp: bool, error: bool) -> void:
 		tutorial_help_label.size = Vector2(new_w, INFO_LINE_SIZE.y)
 		tutorial_help_label.position.x = clip_w
 	)
-	# Glide in and rest near the left edge.
-	info_marquee_tween.tween_property(tutorial_help_label, "position:x", INFO_REST_X, 0.40).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	# Glide in and rest centered between the left/right fades when it fits.
+	info_marquee_tween.tween_property(tutorial_help_label, "position:x", _info_rest_x_for_width(new_w), 0.40).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	if temp:
 		info_marquee_tween.tween_interval(3.0)
 		info_marquee_tween.tween_property(tutorial_help_label, "position:x", new_out_x, 0.24).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
@@ -547,9 +612,6 @@ func _play_info_marquee(text: String, temp: bool, error: bool) -> void:
 				info_temp_active = false
 				_play_info_marquee(info_default_text, false, level_failed)
 		)
-
-func pop_goal_panel() -> void:
-	UIStyles.pop_scale(target_panel, 1.045)
 
 # --- Status pill (LEVEL / MOVES) building blocks ------------------------------
 
@@ -764,19 +826,36 @@ func _on_orbit_button_pressed(button: Button) -> void:
 func _process(delta: float) -> void:
 	if not visible:
 		return
-	if coach_overlay != null and coach_overlay.visible:
-		queue_redraw()
-		return
 	var speed := 0.25
-	orbit_angle += delta * speed
+	orbit_angle += delta * speed * orbit_spin_factor
 	update_orbit_positions(false)
+	if coach_overlay != null and coach_overlay.visible:
+		coach_overlay.configure_context(coach_context())
+		coach_overlay.refresh_spotlight()
 	queue_redraw()
+
+func _on_coach_showing_started() -> void:
+	stop_orbit_spin_smoothly()
+
+func _on_coach_hiding_started() -> void:
+	start_orbit_spin_ramp()
+
+func stop_orbit_spin_smoothly() -> void:
+	if orbit_spin_tween != null and orbit_spin_tween.is_valid():
+		orbit_spin_tween.kill()
+	orbit_spin_tween = create_tween()
+	orbit_spin_tween.tween_property(self, "orbit_spin_factor", 0.0, 0.30).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+func start_orbit_spin_ramp() -> void:
+	if orbit_spin_tween != null and orbit_spin_tween.is_valid():
+		orbit_spin_tween.kill()
+	orbit_spin_factor = 0.0
+	orbit_spin_tween = create_tween()
+	orbit_spin_tween.tween_property(self, "orbit_spin_factor", 1.0, 0.36).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 func _draw() -> void:
 	if not visible:
 		return
-	if center_circle_texture != null:
-		draw_texture_rect(center_circle_texture, Rect2(screen_center - Vector2(CENTER_CIRCLE_RADIUS, CENTER_CIRCLE_RADIUS), Vector2(CENTER_CIRCLE_DIAMETER, CENTER_CIRCLE_DIAMETER)), false)
 	# Slightly wider ring, filled with the purple-button color (mid of the primary
 	# gradient) instead of the faint neutral ring.
 	var ring_color := UIStyles.PRIMARY_TOP.lerp(UIStyles.PRIMARY_BOTTOM, 0.5)

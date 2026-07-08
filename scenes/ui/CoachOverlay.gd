@@ -1,19 +1,27 @@
 class_name CoachOverlay
 extends Control
 
+signal hiding_started
+signal showing_started
+
 const PANEL_WIDTH := 912.0
 const PANEL_PAD := 54.0
 const SPOTLIGHT_PADDING := 2.0
 const SPOTLIGHT_DIM_DARK := Color(0.02, 0.012, 0.05, 0.66)
 const SPOTLIGHT_DIM_LIGHT := Color(0.03, 0.02, 0.08, 0.44)
-const SPOTLIGHT_EDGE_DARK := Color(1, 1, 1, 0.18)
-const SPOTLIGHT_EDGE_LIGHT := Color(0, 0, 0, 0.10)
+const SPOTLIGHT_EDGE_DARK := Color(1, 1, 1, 0.0)
+const SPOTLIGHT_EDGE_LIGHT := Color(0, 0, 0, 0.0)
+const SPOTLIGHT_FEATHER := 52.0
 
 class CoachDimMask:
 	extends ColorRect
 
 	var holes: Array[Dictionary] = []
 	var shader_material: ShaderMaterial
+	var fade_alpha := 1.0:
+		set(value):
+			fade_alpha = value
+			_update_fade_alpha()
 
 	func _ready() -> void:
 		color = Color.WHITE
@@ -25,7 +33,8 @@ shader_type canvas_item;
 
 uniform vec4 dim_color : source_color = vec4(0.03, 0.02, 0.08, 0.5);
 uniform vec4 edge_tint_color : source_color = vec4(1.0, 1.0, 1.0, 0.0);
-uniform float feather_width = 22.0;
+uniform float feather_width = 52.0;
+uniform float fade_alpha = 1.0;
 uniform vec2 mask_size = vec2(1206.0, 2622.0);
 uniform int hole_count = 0;
 uniform vec4 hole_rects[16];
@@ -49,19 +58,21 @@ void fragment() {
 		vec2 center = rect.xy + half_size;
 		float radius = min(hole_radii[i], min(half_size.x, half_size.y));
 		float dist = rounded_box_sdf(p - center, half_size, radius);
-		float local_dim = smoothstep(0.0, feather_width, dist);
+		float local_dim = smoothstep(-feather_width * 0.35, feather_width, dist);
 		dim_amount = min(dim_amount, local_dim);
 		edge_amount = max(edge_amount, (1.0 - local_dim) * step(0.0, dist));
 	}
 	COLOR = dim_color;
-	COLOR.a *= dim_amount;
+	COLOR.a *= dim_amount * fade_alpha;
 	float edge_strength = edge_amount * edge_tint_color.a;
 	COLOR.rgb = mix(COLOR.rgb, edge_tint_color.rgb, edge_strength);
 }
 """
 		shader_material.shader = shader
 		material = shader_material
+		shader_material.set_shader_parameter("feather_width", SPOTLIGHT_FEATHER)
 		_update_shader()
+		_update_fade_alpha()
 
 	func set_holes(next_holes: Array[Dictionary]) -> void:
 		holes = next_holes
@@ -72,6 +83,11 @@ void fragment() {
 			return
 		shader_material.set_shader_parameter("dim_color", dim)
 		shader_material.set_shader_parameter("edge_tint_color", edge_tint)
+
+	func _update_fade_alpha() -> void:
+		if shader_material == null:
+			return
+		shader_material.set_shader_parameter("fade_alpha", fade_alpha)
 
 	func _update_shader() -> void:
 		if shader_material == null:
@@ -102,6 +118,8 @@ var version := 0
 var steps: Array = []
 var step_index := 0
 var context: Dictionary = {}
+var is_hiding := false
+var is_showing := false
 
 func build() -> void:
 	for child in get_children():
@@ -150,6 +168,14 @@ func show_hint(coach_hint: Dictionary) -> void:
 	if dim_mask == null:
 		return
 	version += 1
+	is_hiding = false
+	is_showing = true
+	modulate.a = 1.0
+	if panel != null:
+		panel.modulate.a = 0.0
+	if dim_mask != null:
+		dim_mask.modulate.a = 1.0
+		dim_mask.fade_alpha = 0.0
 	steps.clear()
 	if coach_hint.has("steps"):
 		for step in coach_hint["steps"] as Array:
@@ -159,9 +185,16 @@ func show_hint(coach_hint: Dictionary) -> void:
 	step_index = 0
 	apply_step()
 	visible = true
-	modulate.a = 0.0
+	showing_started.emit()
+	var show_version := version
 	var tween := create_tween()
-	tween.tween_property(self, "modulate:a", 1.0, 0.18).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.set_parallel(true)
+	tween.tween_property(panel, "modulate:a", 1.0, 0.20).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(dim_mask, "fade_alpha", 1.0, 0.34).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.finished.connect(func() -> void:
+		if show_version == version:
+			is_showing = false
+	)
 
 func apply_step() -> void:
 	if step_index < 0 or step_index >= steps.size():
@@ -175,6 +208,17 @@ func apply_step() -> void:
 	var text := Locale.t(str(step.get("key", "")), str(step.get("text", "")))
 	layout_panel(text)
 	panel.position = panel_position_for_rect(rect)
+
+func refresh_spotlight() -> void:
+	if not visible or step_index < 0 or step_index >= steps.size():
+		return
+	var step: Dictionary = steps[step_index] as Dictionary
+	var area := str(step.get("area", "target"))
+	var rect := rect_for_area(area)
+	if dim_mask != null:
+		dim_mask.set_holes(holes_for_area(area, rect))
+	if panel != null:
+		panel.position = panel_position_for_rect(rect)
 
 func layout_panel(text: String) -> void:
 	label.text = text
@@ -232,17 +276,34 @@ func _on_overlay_input(event: InputEvent) -> void:
 
 func fade_out(check_version: int) -> void:
 	var fade := create_tween()
-	fade.tween_property(self, "modulate:a", 0.0, 0.22).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	fade.set_parallel(true)
+	fade.tween_property(panel, "modulate:a", 0.0, 0.18).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	fade.tween_property(dim_mask, "fade_alpha", 0.0, 0.34).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	await fade.finished
 	if check_version == version:
 		visible = false
+		is_hiding = false
+		is_showing = false
+		modulate.a = 1.0
+		if panel != null:
+			panel.modulate.a = 1.0
+		if dim_mask != null:
+			dim_mask.modulate.a = 1.0
+			dim_mask.fade_alpha = 1.0
 
 func hide_hint() -> void:
+	if is_hiding:
+		return
 	version += 1
 	if visible:
+		is_hiding = true
+		is_showing = false
+		hiding_started.emit()
 		fade_out(version)
 	else:
 		visible = false
+		is_hiding = false
+		is_showing = false
 
 func rect_for_area(area: String) -> Rect2:
 	match area:

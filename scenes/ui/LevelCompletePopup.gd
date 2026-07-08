@@ -6,6 +6,7 @@ const PopupFactoryScript = preload("res://scripts/ui/PopupFactory.gd")
 signal next_pressed
 signal levels_pressed
 
+var overlay: ColorRect
 var panel: Panel
 var title_label: Label
 var stars_label: Control
@@ -14,8 +15,10 @@ var reward_label: Label
 var next_button: Button
 var levels_button: Button
 var badge_circle: TextureRect
+var confetti_layer: Control
 var panel_width := 1005.0
 var panel_height := 1043.0
+var confetti_rng := RandomNumberGenerator.new()
 
 func _ready() -> void:
 	z_index = 100
@@ -34,17 +37,25 @@ func build() -> void:
 	var vp := Layout.viewport_size(self)
 	size = vp
 
-	var overlay := PopupFactoryScript.scrim(vp)
+	overlay = PopupFactoryScript.scrim(vp)
 	add_child(overlay)
 	panel_width = PopupFactoryScript.popup_width(vp.x)
 	var pw := panel_width
 	var ph := panel_height
 
 	panel = Panel.new()
+	panel.name = "PopupPanel"
 	panel.position = Vector2((vp.x - pw) * 0.5, (vp.y - ph) * 0.5)
 	panel.size = Vector2(pw, ph)
 	PopupFactoryScript.apply_panel_glass(panel)
+	PopupFactoryScript.register_sheet_panel(panel)
 	add_child(panel)
+
+	confetti_layer = Control.new()
+	confetti_layer.position = Vector2.ZERO
+	confetti_layer.size = panel.size
+	confetti_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(confetti_layer)
 
 	badge_circle = PopupFactoryScript.badge(panel, pw, Color("#7FE3D2"), Color("#2FB6A8"), UIStyles.ICON_CHECK, 94.0)
 
@@ -112,25 +123,21 @@ func show_result(title_text: String, stars: int, moves: int, has_next: bool, rew
 		levels_button.visible = false
 	next_button.text = Locale.t("complete.next", "Next Level") if show_details else Locale.t("complete.continue", "Continue")
 	levels_button.text = Locale.t("complete.back", "Back to Levels")
-	visible = true
-	animate_open()
+	PopupFactoryScript.show_sheet(self, panel, overlay)
+	if show_details:
+		start_confetti()
 
-func animate_open() -> void:
-	panel.scale = Vector2(0.94, 0.94)
-	panel.pivot_offset = panel.size * 0.5
-	panel.modulate.a = 0.0
-	var tween := panel.create_tween()
-	tween.tween_property(panel, "modulate:a", 1.0, 0.12)
-	tween.parallel().tween_property(panel, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	if badge_circle != null:
-		badge_circle.scale = Vector2(0.5, 0.5)
-		badge_circle.pivot_offset = badge_circle.size * 0.5
-		var badge_tween := badge_circle.create_tween()
-		badge_tween.tween_property(badge_circle, "scale", Vector2(1.12, 1.12), 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		badge_tween.tween_property(badge_circle, "scale", Vector2.ONE, 0.10).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-
-func hide_popup() -> void:
-	visible = false
+func hide_popup(after_hidden: Callable = Callable()) -> void:
+	if panel != null:
+		PopupFactoryScript.hide_sheet(self, panel, overlay, func() -> void:
+			clear_confetti()
+			if after_hidden.is_valid():
+				after_hidden.call()
+		)
+	else:
+		visible = false
+		if after_hidden.is_valid():
+			after_hidden.call()
 
 func draw_star_row(count: int) -> void:
 	for child in stars_label.get_children():
@@ -142,9 +149,64 @@ func draw_star_row(count: int) -> void:
 	for i in range(3):
 		var texture: Texture2D = UIStyles.ICON_STAR if i < count else UIStyles.ICON_STAR_EMPTY
 		var color: Color = UIStyles.GOLD if i < count else UIStyles.STAR_EMPTY
-		var star := UIStyles.icon(texture, stars_label, Vector2(start_x + i * (star_size + gap), 3), Vector2(star_size, star_size), color)
-		star.scale = Vector2(0.35, 0.35)
-		star.pivot_offset = star.size * 0.5
-		var tween := star.create_tween()
-		tween.tween_interval(0.05 + float(i) * 0.055)
-		tween.tween_property(star, "scale", Vector2.ONE, 0.20).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		UIStyles.icon(texture, stars_label, Vector2(start_x + i * (star_size + gap), 3), Vector2(star_size, star_size), color)
+
+func start_confetti() -> void:
+	if confetti_layer == null:
+		return
+	clear_confetti()
+	confetti_rng.randomize()
+	var colors := [
+		Color("#FBBF24"),
+		Color("#7FE3D2"),
+		Color("#A78BFA"),
+		Color("#F87171"),
+		Color("#60A5FA"),
+		Color("#FFFFFF")
+	]
+	var count := confetti_rng.randi_range(22, 28)
+	for _i in range(count):
+		var size := confetti_rng.randf_range(12.0, 25.0)
+		var color: Color = colors[confetti_rng.randi_range(0, colors.size() - 1)]
+		var particle := make_confetti_particle(size, color, confetti_rng.randf() > 0.5)
+		particle.position = Vector2(confetti_rng.randf_range(60.0, panel_width - 60.0), -40.0 - confetti_rng.randf_range(0.0, 80.0))
+		particle.rotation = confetti_rng.randf_range(-0.7, 0.7)
+		particle.pivot_offset = particle.size * 0.5
+		particle.modulate.a = 1.0
+		confetti_layer.add_child(particle)
+
+		var duration := confetti_rng.randf_range(2.2, 3.9)
+		var delay := confetti_rng.randf_range(0.0, 0.6)
+		var drift := confetti_rng.randf_range(-95.0, 95.0)
+		var rotation_dir := -1.0 if confetti_rng.randf() < 0.5 else 1.0
+		var tween := particle.create_tween()
+		tween.tween_interval(delay)
+		tween.tween_property(particle, "position", Vector2(particle.position.x + drift, 900.0), duration).set_trans(Tween.TRANS_LINEAR).set_ease(Tween.EASE_IN_OUT)
+		tween.parallel().tween_property(particle, "rotation", particle.rotation + deg_to_rad(540.0) * rotation_dir, duration).set_trans(Tween.TRANS_LINEAR).set_ease(Tween.EASE_IN_OUT)
+		tween.parallel().tween_property(particle, "modulate:a", 0.0, duration).set_trans(Tween.TRANS_LINEAR).set_ease(Tween.EASE_IN_OUT)
+		tween.finished.connect(func() -> void:
+			if is_instance_valid(particle):
+				particle.queue_free()
+		)
+
+func make_confetti_particle(size: float, color: Color, circle: bool) -> Control:
+	if circle:
+		var dot := Panel.new()
+		dot.size = Vector2(size, size)
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var style := StyleBoxFlat.new()
+		style.bg_color = color
+		UIStyles._set_radius(style, int(size * 0.5))
+		dot.add_theme_stylebox_override("panel", style)
+		return dot
+	var square := ColorRect.new()
+	square.size = Vector2(size, size)
+	square.color = color
+	square.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return square
+
+func clear_confetti() -> void:
+	if confetti_layer == null:
+		return
+	for child in confetti_layer.get_children():
+		child.queue_free()

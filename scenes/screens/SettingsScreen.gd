@@ -14,7 +14,9 @@ var sound_volume := 80
 var current_theme := "light"
 var current_language := "en"
 var reset_popup: Control
+var reset_popup_panel: Panel
 var language_popup: Control
+var language_popup_panel: Panel
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -26,15 +28,22 @@ func _on_viewport_resized() -> void:
 		build()
 
 func configure(music_value: int, sound_value: int, theme_name: String = "light", language_code: String = "en") -> void:
+	var keep_language_popup_open := is_language_popup_open()
 	music_volume = int(clamp(music_value, 0, 100))
 	sound_volume = int(clamp(sound_value, 0, 100))
 	current_theme = "dark" if theme_name == "dark" else "light"
 	current_language = language_code
 	build()
+	if keep_language_popup_open:
+		show_language_popup(true)
 
 func build() -> void:
 	for child in get_children():
 		child.queue_free()
+	reset_popup = null
+	reset_popup_panel = null
+	language_popup = null
+	language_popup_panel = null
 
 	var col := Layout.content_column(self)
 	var cx := col.position.x
@@ -197,7 +206,7 @@ func build_language_row(x: float, y: float, w: float) -> void:
 		row.add_child(chev)
 
 func build_language_popup() -> void:
-	language_popup = _make_scrim_popup()
+	language_popup = _make_scrim_popup(func() -> void: hide_language_popup())
 	var vp := Layout.viewport_size(self)
 	var pw := PopupFactoryScript.popup_width(vp.x)
 	var langs: Array = Locale.available()
@@ -207,9 +216,12 @@ func build_language_popup() -> void:
 	var cancel_y := options_top + float(langs.size()) * (opt_h + opt_gap) - opt_gap + 74.0
 	var ph := cancel_y + PopupFactoryScript.POPUP_SECONDARY_H + 80.0
 	var panel := Panel.new()
+	panel.name = "PopupPanel"
 	panel.position = Vector2((vp.x - pw) * 0.5, (vp.y - ph) * 0.5)
 	panel.size = Vector2(pw, ph)
 	PopupFactoryScript.apply_panel_glass(panel)
+	PopupFactoryScript.register_sheet_panel(panel)
+	language_popup_panel = panel
 	language_popup.add_child(panel)
 
 	var globe: Texture2D = UIStyles.load_icon(UIStyles.GLOBE_PATH)
@@ -229,7 +241,6 @@ func build_language_popup() -> void:
 		opt.add_theme_stylebox_override("pressed", style.duplicate())
 		UIStyles.add_press_animation(opt)
 		opt.pressed.connect(func():
-			language_popup.visible = false
 			language_changed.emit(code)
 		)
 		panel.add_child(opt)
@@ -249,7 +260,7 @@ func build_language_popup() -> void:
 		ry += opt_h + opt_gap
 
 	var cancel := PopupFactoryScript.secondary_button(Locale.t("common.cancel", "Cancel"), pw, cancel_y)
-	cancel.pressed.connect(func(): language_popup.visible = false)
+	cancel.pressed.connect(func(): hide_language_popup())
 	panel.add_child(cancel)
 
 func _language_row_style(selected: bool) -> StyleBoxFlat:
@@ -272,15 +283,31 @@ func _language_row_style(selected: bool) -> StyleBoxFlat:
 	UIStyles._set_radius(s, 60)
 	return s
 
-func show_language_popup() -> void:
-	if language_popup != null:
-		language_popup.visible = true
+func is_language_popup_open() -> bool:
+	return is_instance_valid(language_popup) and language_popup.visible
+
+func show_language_popup(immediate: bool = false) -> void:
+	if language_popup != null and language_popup_panel != null:
+		var overlay := PopupFactoryScript.find_scrim(language_popup)
+		if immediate:
+			PopupFactoryScript.show_sheet_immediate(language_popup, language_popup_panel, overlay)
+		else:
+			PopupFactoryScript.show_sheet(language_popup, language_popup_panel, overlay)
+
+func hide_language_popup(after_hidden: Callable = Callable()) -> void:
+	if language_popup != null and language_popup_panel != null:
+		PopupFactoryScript.hide_sheet(language_popup, language_popup_panel, PopupFactoryScript.find_scrim(language_popup), after_hidden)
+	else:
+		if language_popup != null:
+			language_popup.visible = false
+		if after_hidden.is_valid():
+			after_hidden.call()
 
 # ---------------------------------------------------------------------------
 # Reset popup
 # ---------------------------------------------------------------------------
 
-func _make_scrim_popup() -> Control:
+func _make_scrim_popup(close_callback: Callable = Callable()) -> Control:
 	var popup := Control.new()
 	# Explicit size: anchor presets resolve against this screen's own rect,
 	# which is not full-rect sized, so an anchored overlay collapses to zero.
@@ -289,19 +316,22 @@ func _make_scrim_popup() -> Control:
 	popup.visible = false
 	popup.z_index = 100
 	add_child(popup)
-	var overlay := PopupFactoryScript.scrim(popup.size, func() -> void: popup.visible = false)
+	var overlay := PopupFactoryScript.scrim(popup.size, close_callback)
 	popup.add_child(overlay)
 	return popup
 
 func build_reset_popup() -> void:
-	reset_popup = _make_scrim_popup()
+	reset_popup = _make_scrim_popup(func() -> void: hide_reset_popup())
 	var vp := Layout.viewport_size(self)
 	var pw := PopupFactoryScript.popup_width(vp.x)
 	var ph := 983.0
 	var panel := Panel.new()
+	panel.name = "PopupPanel"
 	panel.position = Vector2((vp.x - pw) * 0.5, (vp.y - ph) * 0.5)
 	panel.size = Vector2(pw, ph)
 	PopupFactoryScript.apply_panel_glass(panel)
+	PopupFactoryScript.register_sheet_panel(panel)
+	reset_popup_panel = panel
 	reset_popup.add_child(panel)
 
 	var warn: Texture2D = UIStyles.load_icon(UIStyles.WARNING_CIRCLE_PATH)
@@ -311,18 +341,28 @@ func build_reset_popup() -> void:
 
 	var confirm_btn := PopupFactoryScript.primary_button(Locale.t("settings.reset.confirm", "Reset Progress"), pw, 500.0, true)
 	confirm_btn.pressed.connect(func():
-		reset_popup.visible = false
-		reset_progress_requested.emit()
+		hide_reset_popup(func() -> void:
+			reset_progress_requested.emit()
+		)
 	)
 	panel.add_child(confirm_btn)
 
 	var cancel_btn := PopupFactoryScript.secondary_button(Locale.t("common.cancel", "Cancel"), pw, 735.0)
-	cancel_btn.pressed.connect(func(): reset_popup.visible = false)
+	cancel_btn.pressed.connect(func(): hide_reset_popup())
 	panel.add_child(cancel_btn)
 
 func show_reset_popup() -> void:
-	if reset_popup != null:
-		reset_popup.visible = true
+	if reset_popup != null and reset_popup_panel != null:
+		PopupFactoryScript.show_sheet(reset_popup, reset_popup_panel, PopupFactoryScript.find_scrim(reset_popup))
+
+func hide_reset_popup(after_hidden: Callable = Callable()) -> void:
+	if reset_popup != null and reset_popup_panel != null:
+		PopupFactoryScript.hide_sheet(reset_popup, reset_popup_panel, PopupFactoryScript.find_scrim(reset_popup), after_hidden)
+	else:
+		if reset_popup != null:
+			reset_popup.visible = false
+		if after_hidden.is_valid():
+			after_hidden.call()
 
 # ---------------------------------------------------------------------------
 # Sliders
