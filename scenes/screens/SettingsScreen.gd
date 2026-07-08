@@ -2,15 +2,18 @@ class_name SettingsScreen
 extends Control
 
 const PopupFactoryScript = preload("res://scripts/ui/PopupFactory.gd")
+const AudioManagerScript = preload("res://scripts/audio/AudioManager.gd")
 
 signal back_pressed
 signal volumes_changed(music_value: int, sound_value: int)
+signal haptics_changed(enabled: bool)
 signal reset_progress_requested
 signal theme_selected(theme_name: String)
 signal language_changed(language_code: String)
 
 var music_volume := 80
 var sound_volume := 80
+var haptics_enabled := true
 var current_theme := "light"
 var current_language := "en"
 var reset_popup: Control
@@ -27,10 +30,11 @@ func _on_viewport_resized() -> void:
 	if visible:
 		build()
 
-func configure(music_value: int, sound_value: int, theme_name: String = "light", language_code: String = "en") -> void:
+func configure(music_value: int, sound_value: int, theme_name: String = "light", language_code: String = "en", enable_haptics: bool = true) -> void:
 	var keep_language_popup_open := is_language_popup_open()
 	music_volume = int(clamp(music_value, 0, 100))
 	sound_volume = int(clamp(sound_value, 0, 100))
+	haptics_enabled = enable_haptics
 	current_theme = "dark" if theme_name == "dark" else "light"
 	current_language = language_code
 	build()
@@ -80,12 +84,14 @@ func build() -> void:
 	sound_card.add_child(divider)
 	add_slider_block(sound_card, Locale.t("settings.sound", "Sound"), UIStyles.ICON_SPEAKER, sound_volume, 313.0, "sound")
 
-	# --- Appearance + Language tiles: 194 tall = main-menu button height. ---
-	add_section_label(cx, t + 855.0, cw, Locale.t("settings.appearance", "APPEARANCE"))
-	build_theme_toggle(cx, t + 936.0, cw)
+	build_haptics_row(cx, t + 805.0, cw)
 
-	add_section_label(cx, t + 1200.0, cw, Locale.t("settings.language", "LANGUAGE"))
-	build_language_row(cx, t + 1281.0, cw)
+	# --- Appearance + Language tiles: 194 tall = main-menu button height. ---
+	add_section_label(cx, t + 1069.0, cw, Locale.t("settings.appearance", "APPEARANCE"))
+	build_theme_toggle(cx, t + 1150.0, cw)
+
+	add_section_label(cx, t + 1414.0, cw, Locale.t("settings.language", "LANGUAGE"))
+	build_language_row(cx, t + 1495.0, cw)
 
 	# --- Reset: 194 tall, its bottom on the unified bottom line (= the main-menu
 	# Settings button's bottom and the operator-chips bottom). ---
@@ -109,6 +115,90 @@ func add_section_label(x: float, y: float, w: float, text: String) -> void:
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	UIStyles.apply_font(label, UIStyles.FONT_BOLD, 44, UIStyles.MUTED)
 	add_child(label)
+
+# ---------------------------------------------------------------------------
+# Haptics
+# ---------------------------------------------------------------------------
+
+func build_haptics_row(x: float, y: float, w: float) -> void:
+	var row_h := 194.0
+	var row := Button.new()
+	row.position = Vector2(x, y)
+	row.size = Vector2(w, row_h)
+	row.toggle_mode = true
+	row.button_pressed = haptics_enabled
+	UIStyles.menu_button(row)
+	add_child(row)
+
+	var label_row := HBoxContainer.new()
+	label_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label_row.position = Vector2(67, 0)
+	label_row.size = Vector2(w - 290, row_h)
+	label_row.add_theme_constant_override("separation", 22)
+	row.add_child(label_row)
+
+	var label := Label.new()
+	label.text = Locale.t("settings.haptics", "Haptic Feedback")
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.custom_minimum_size.y = row_h
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(label, UIStyles.FONT_BOLD, 50, UIStyles.TEXT)
+	label_row.add_child(label)
+
+	var note_color := UIStyles.MUTED
+	note_color.a *= 0.72
+	var note := Label.new()
+	note.text = Locale.t("settings.haptics_note", "(Sound Test)")
+	note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	note.custom_minimum_size.y = row_h
+	note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(note, UIStyles.FONT_MEDIUM, 34, note_color)
+	label_row.add_child(note)
+
+	var track := Panel.new()
+	track.position = Vector2(w - 67.0 - 130.0, (row_h - 72.0) * 0.5)
+	track.size = Vector2(130, 72)
+	track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(track)
+
+	var knob := Panel.new()
+	knob.size = Vector2(54, 54)
+	knob.position.y = 9.0
+	knob.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var knob_style := StyleBoxFlat.new()
+	knob_style.bg_color = Color.WHITE
+	UIStyles._set_radius(knob_style, 27)
+	knob.add_theme_stylebox_override("panel", knob_style)
+	track.add_child(knob)
+	_apply_haptics_switch_visual(track, knob, haptics_enabled, false)
+
+	row.toggled.connect(func(enabled: bool) -> void:
+		haptics_enabled = enabled
+		_apply_haptics_switch_visual(track, knob, enabled, true)
+		haptics_changed.emit(enabled)
+		if enabled:
+			AudioManagerScript.confirm_haptics_enabled()
+	)
+
+func _apply_haptics_switch_visual(track: Panel, knob: Panel, enabled: bool, animate: bool) -> void:
+	if enabled:
+		track.add_theme_stylebox_override("panel", UIStyles.gradient_style(
+			UIStyles.PRIMARY_TOP,
+			UIStyles.PRIMARY_BOTTOM,
+			36,
+			Vector2i(130, 72)
+		))
+	else:
+		var off_style := StyleBoxFlat.new()
+		off_style.bg_color = Color(1, 1, 1, 0.10) if UIStyles.is_dark() else Color(UIStyles.PURPLE.r, UIStyles.PURPLE.g, UIStyles.PURPLE.b, 0.15)
+		UIStyles._set_radius(off_style, 36)
+		track.add_theme_stylebox_override("panel", off_style)
+	var target_x := 67.0 if enabled else 9.0
+	if animate:
+		var tween := knob.create_tween()
+		tween.tween_property(knob, "position:x", target_x, 0.18).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	else:
+		knob.position.x = target_x
 
 # ---------------------------------------------------------------------------
 # Appearance toggle
@@ -353,6 +443,7 @@ func build_reset_popup() -> void:
 
 func show_reset_popup() -> void:
 	if reset_popup != null and reset_popup_panel != null:
+		AudioManagerScript.play_reset_progress_haptic()
 		PopupFactoryScript.show_sheet(reset_popup, reset_popup_panel, PopupFactoryScript.find_scrim(reset_popup))
 
 func hide_reset_popup(after_hidden: Callable = Callable()) -> void:

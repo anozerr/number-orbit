@@ -1,6 +1,8 @@
 class_name PopupFactory
 extends RefCounted
 
+const AudioManagerScript = preload("res://scripts/audio/AudioManager.gd")
+
 const POPUP_WIDTH := 1005.0
 const POPUP_PAD := 80.0
 const POPUP_RADIUS := 101
@@ -73,6 +75,7 @@ static func show_sheet(root: Control, panel: Control, overlay: CanvasItem = null
 	_kill_sheet_tween(root)
 	root.visible = true
 	root.set_meta(SHEET_HIDING_META, false)
+	AudioManagerScript.play_popup_open()
 	_apply_sheet_progress(panel, home, 0.0)
 	if is_instance_valid(overlay):
 		overlay.modulate.a = 0.0
@@ -113,6 +116,7 @@ static func hide_sheet(root: Control, panel: Control, overlay: CanvasItem = null
 
 	_kill_sheet_tween(root)
 	root.set_meta(SHEET_HIDING_META, true)
+	AudioManagerScript.play_popup_close()
 	var home := _sheet_home(panel)
 	var start_position := panel.position
 	var start_scale := panel.scale

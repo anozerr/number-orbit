@@ -4,6 +4,7 @@ extends Node2D
 const OperationLegendScene = preload("res://scenes/ui/OperationLegend.tscn")
 const HintPopupScript = preload("res://scenes/ui/HintPopup.gd")
 const CoachOverlayScript = preload("res://scenes/ui/CoachOverlay.gd")
+const AudioManagerScript = preload("res://scripts/audio/AudioManager.gd")
 
 signal back_pressed
 signal settings_pressed
@@ -83,6 +84,8 @@ var info_default_text := ""
 var info_temp_active := false
 var info_marquee_version := 0
 var info_marquee_tween: Tween
+var hint_highlight_item_id := ""
+var hint_highlight_tween: Tween
 
 func _ready() -> void:
 	build()
@@ -171,6 +174,7 @@ func _apply_layout() -> void:
 	queue_redraw()
 
 func build() -> void:
+	clear_hint_highlight()
 	for child in get_children():
 		child.queue_free()
 	# Same fill as the primary Play/Continue button (mockup parity): diagonal
@@ -346,7 +350,12 @@ void fragment() {
 	bulbs_button.size = Vector2(455, ACTION_BUTTON_HEIGHT)
 	bulbs_button.add_theme_font_size_override("font_size", 47)
 	UIStyles.menu_button(bulbs_button)
-	bulbs_button.pressed.connect(func(): hint_popup.show_prompt())
+	bulbs_button.pressed.connect(func():
+		if hint_popup != null and hint_popup.has_method("has_cached_result") and hint_popup.has_cached_result():
+			hint_requested.emit()
+		else:
+			hint_popup.show_prompt()
+	)
 	add_child(bulbs_button)
 
 	operation_legend = OperationLegendScene.instantiate()
@@ -370,6 +379,9 @@ void fragment() {
 	_apply_layout()
 
 func configure(title_text: String, current_number: int, target_number: int, moves: int, thresholds: Array, star_bands: Array, orbit_items: Array, allowed_ops: Array, failed: bool, hint_points: int, tutorial: bool = false, tutorial_help: String = "", coach_hint: Dictionary = {}) -> void:
+	var previous_moves := current_moves
+	if moves != previous_moves:
+		clear_hint_highlight()
 	level_failed = failed
 	current_number_value = current_number
 	current_hint_points = hint_points
@@ -417,9 +429,10 @@ func pulse_failure_controls() -> void:
 
 func _on_moves_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
-	if mouse_event == null:
+	if mouse_event == null or mouse_event.button_index != MOUSE_BUTTON_LEFT:
 		return
 	if mouse_event.pressed:
+		AudioManagerScript.play_ui_tap()
 		UIStyles.press_hold(moves_bg, true)
 		if current_is_tutorial:
 			show_temporary_help(Locale.t("game.tap.moves_tut", "Tutorial moves earn no stars."), false)
@@ -430,9 +443,10 @@ func _on_moves_panel_input(event: InputEvent) -> void:
 
 func _on_level_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
-	if mouse_event == null:
+	if mouse_event == null or mouse_event.button_index != MOUSE_BUTTON_LEFT:
 		return
 	if mouse_event.pressed:
+		AudioManagerScript.play_ui_tap()
 		UIStyles.press_hold(level_bg, true)
 		if current_is_tutorial:
 			show_temporary_help(Locale.t("game.tap.level_tut", "One step at a time."), false)
@@ -446,6 +460,7 @@ func _on_goal_panel_input(event: InputEvent) -> void:
 	if mouse_event == null or mouse_event.button_index != MOUSE_BUTTON_LEFT:
 		return
 	if mouse_event.pressed:
+		AudioManagerScript.play_ui_tap()
 		UIStyles.press_hold(target_panel, true)
 		show_temporary_help(Locale.t("game.tap.target", "Reach %d using orbit numbers.") % current_target_value, false)
 	else:
@@ -456,6 +471,7 @@ func _on_center_panel_input(event: InputEvent) -> void:
 	if mouse_event == null or mouse_event.button_index != MOUSE_BUTTON_LEFT:
 		return
 	if mouse_event.pressed:
+		AudioManagerScript.play_ui_tap()
 		UIStyles.press_hold(center_panel, true)
 		show_temporary_help(Locale.t("game.tap.center", "Your number. Moves change it."), false)
 	else:
@@ -802,6 +818,10 @@ func style_operation_button(button: Button, op: String, valid: bool = true) -> v
 	normal.border_width_bottom = 4
 	var hover: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
 	var pressed: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
+	if valid and str(button.get_meta("id", "")) == hint_highlight_item_id:
+		apply_hint_shadow(normal, op)
+		apply_hint_shadow(hover, op)
+		apply_hint_shadow(pressed, op)
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", hover)
 	button.add_theme_stylebox_override("pressed", pressed)
@@ -811,6 +831,13 @@ func style_operation_button(button: Button, op: String, valid: bool = true) -> v
 	button.add_theme_color_override("font_hover_color", text_color)
 	button.add_theme_color_override("font_pressed_color", text_color)
 	button.add_theme_color_override("font_disabled_color", text_color)
+
+func apply_hint_shadow(style: StyleBoxFlat, op: String) -> void:
+	var shadow := UIStyles.operation_border(op)
+	shadow.a = 0.34 if UIStyles.is_dark() else 0.26
+	style.shadow_color = shadow
+	style.shadow_size = 20
+	style.shadow_offset = Vector2.ZERO
 
 func _on_orbit_button_pressed(button: Button) -> void:
 	if button == null or button.is_queued_for_deletion() or button.disabled:
@@ -822,6 +849,54 @@ func _on_orbit_button_pressed(button: Button) -> void:
 	tween.tween_property(button, "scale", Vector2(0.90, 0.90), 0.055).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.tween_property(button, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	orbit_pressed.emit(int(button.get_meta("value")), str(button.get_meta("op")), str(button.get_meta("id", "")))
+
+func reveal_hint_result(message: String, balance: int, target: Dictionary) -> void:
+	current_hint_points = balance
+	if hint_popup != null and hint_popup.has_method("cache_result"):
+		hint_popup.cache_result(message, balance)
+	var reveal := func() -> void:
+		highlight_hint_target(target)
+	if hint_popup != null and hint_popup.visible:
+		hint_popup.hide_popup(reveal)
+	else:
+		reveal.call()
+
+func highlight_hint_target(target: Dictionary) -> void:
+	clear_hint_highlight()
+	if target.is_empty():
+		return
+	var item_id := str(target.get("id", ""))
+	var button := find_orbit_button(item_id) if not item_id.is_empty() else null
+	if button == null:
+		button = find_orbit_button_by_move(str(target.get("op", "")), int(target.get("value", 0)))
+	if button == null:
+		return
+	hint_highlight_item_id = str(button.get_meta("id", ""))
+	var op := str(button.get_meta("op", target.get("op", "")))
+	var value := int(button.get_meta("value", target.get("value", 0)))
+	var valid_operation := OperationLogic.can_apply(current_number_value, value, op)
+	style_operation_button(button, op, valid_operation)
+	if hint_highlight_tween != null and hint_highlight_tween.is_valid():
+		hint_highlight_tween.kill()
+	button.pivot_offset = button.size * 0.5
+	button.scale = Vector2.ONE
+	hint_highlight_tween = button.create_tween()
+	hint_highlight_tween.tween_property(button, "scale", Vector2(1.035, 1.035), 0.16).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	hint_highlight_tween.tween_property(button, "scale", Vector2.ONE, 0.20).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+func find_orbit_button_by_move(op: String, value: int) -> Button:
+	for child in orbit.get_children():
+		var btn := child as Button
+		if btn == null or btn.is_queued_for_deletion():
+			continue
+		if str(btn.get_meta("op", "")) == op and int(btn.get_meta("value", 0)) == value:
+			return btn
+	return null
+
+func clear_hint_highlight() -> void:
+	if hint_highlight_tween != null and hint_highlight_tween.is_valid():
+		hint_highlight_tween.kill()
+	hint_highlight_item_id = ""
 
 func _process(delta: float) -> void:
 	if not visible:
@@ -903,6 +978,7 @@ func orbit_position_for_angle(angle_without_spin: float) -> Vector2:
 	return screen_center + Vector2(cos(angle), sin(angle)) * orbit_radius
 
 func clear_orbit_buttons() -> void:
+	clear_hint_highlight()
 	if orbit == null:
 		return
 	for child in orbit.get_children().duplicate():

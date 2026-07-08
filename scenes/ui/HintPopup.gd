@@ -112,8 +112,7 @@ func show_prompt() -> void:
 
 func show_result(message: String, balance: int) -> void:
 	current_hint_points = balance
-	cached_popup_hint_text = message
-	cached_popup_move_index = current_moves
+	cache_result(message, balance)
 	reset_layout()
 	apply_result_text(message)
 	balance_label.text = Locale.t("hint.balance", "Balance: %d bulbs") % current_hint_points
@@ -134,6 +133,14 @@ func show_insufficient_balance(balance: int) -> void:
 	ad_button.visible = true
 	cancel_button.text = Locale.t("common.cancel", "Cancel")
 	PopupFactoryScript.show_sheet(self, panel, overlay)
+
+func cache_result(message: String, balance: int) -> void:
+	current_hint_points = balance
+	cached_popup_hint_text = message
+	cached_popup_move_index = current_moves
+
+func has_cached_result() -> bool:
+	return cached_popup_move_index == current_moves and not cached_popup_hint_text.is_empty()
 
 func reset_layout() -> void:
 	var pw := panel.size.x

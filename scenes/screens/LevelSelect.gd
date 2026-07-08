@@ -2,6 +2,7 @@ class_name LevelSelectScreen
 extends Control
 
 const PopupFactoryScript = preload("res://scripts/ui/PopupFactory.gd")
+const AudioManagerScript = preload("res://scripts/audio/AudioManager.gd")
 
 signal back_pressed
 signal settings_pressed
@@ -430,6 +431,7 @@ func build_locked_level_popup() -> void:
 func show_locked_level_popup(level_number: int, can_watch_ad: bool) -> void:
 	if not is_instance_valid(locked_popup):
 		build_locked_level_popup()
+	AudioManagerScript.play_locked_level_haptic()
 	locked_popup_level_number = level_number
 	locked_popup_body.text = Locale.t("levels.locked.body", "Complete the previous level%s to open it.") % (Locale.t("levels.locked.or_ad", " or watch an ad") if can_watch_ad else "")
 	locked_popup_ad_button.visible = can_watch_ad

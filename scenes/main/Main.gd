@@ -5,6 +5,7 @@ const LevelSelectScene = preload("res://scenes/screens/LevelSelect.tscn")
 const SettingsScene = preload("res://scenes/screens/SettingsScreen.tscn")
 const GameScreenScene = preload("res://scenes/screens/GameScreen.tscn")
 const CompletePopupScene = preload("res://scenes/ui/LevelCompletePopup.tscn")
+const AudioManagerScript = preload("res://scripts/audio/AudioManager.gd")
 const OrbitSlotsScript = preload("res://scripts/game/OrbitSlots.gd")
 const HintSolverScript = preload("res://scripts/game/HintSolver.gd")
 
@@ -20,6 +21,7 @@ var shown_tutorial_coaches: Dictionary = {}
 var bg: ThemeBackground
 var theme_crossfade: TextureRect
 var current_screen: String = "menu"
+var audio: Node
 var main_menu: MainMenuScreen
 var level_select: LevelSelectScreen
 var settings_screen: SettingsScreen
@@ -32,6 +34,13 @@ func _ready() -> void:
 	tutorial_levels = LevelData.get_tutorial_levels()
 	UIStyles.set_theme(state.theme)
 	Locale.set_language(state.language)
+	audio = AudioManagerScript.new()
+	audio.name = "AudioManager"
+	audio.set("music_volume", state.music_volume)
+	audio.set("sound_volume", state.sound_volume)
+	audio.set("haptics_enabled", state.haptics_enabled)
+	add_child(audio)
+	audio.configure(state.music_volume, state.sound_volume, state.haptics_enabled)
 	build()
 	show_main_menu()
 
@@ -58,10 +67,11 @@ func build() -> void:
 	settings_screen = get_or_create_screen("SettingsScreen", SettingsScene) as SettingsScreen
 	settings_screen.back_pressed.connect(_on_settings_back_pressed)
 	settings_screen.volumes_changed.connect(_on_settings_volumes_changed)
+	settings_screen.haptics_changed.connect(_on_settings_haptics_changed)
 	settings_screen.reset_progress_requested.connect(_on_reset_progress_pressed)
 	settings_screen.theme_selected.connect(_on_theme_changed)
 	settings_screen.language_changed.connect(_on_language_changed)
-	settings_screen.configure(state.music_volume, state.sound_volume, state.theme, state.language)
+	settings_screen.configure(state.music_volume, state.sound_volume, state.theme, state.language, state.haptics_enabled)
 
 	game_screen = get_or_create_screen("GameScreen", GameScreenScene) as GameScreen
 	game_screen.back_pressed.connect(_on_game_back_pressed)
@@ -176,7 +186,7 @@ func rebuild_all() -> void:
 	if bg != null:
 		bg.refresh()
 	main_menu.build()
-	settings_screen.configure(state.music_volume, state.sound_volume, state.theme, state.language)
+	settings_screen.configure(state.music_volume, state.sound_volume, state.theme, state.language, state.haptics_enabled)
 	game_screen.build()
 	complete_popup.build()
 	# LevelSelect rebuilds its own structure when shown (needs star data).
@@ -204,7 +214,10 @@ func _on_levels_settings_pressed() -> void:
 func _on_reset_progress_pressed() -> void:
 	state.setup(LevelData.get_levels(), false)
 	tutorial_levels = LevelData.get_tutorial_levels()
-	settings_screen.configure(state.music_volume, state.sound_volume)
+	settings_screen.configure(state.music_volume, state.sound_volume, state.theme, state.language, state.haptics_enabled)
+	if audio != null:
+		audio.set_volumes(state.music_volume, state.sound_volume)
+		audio.set_haptics_enabled(state.haptics_enabled)
 	load_level(1)
 	state.save_progress()
 	show_main_menu()
@@ -226,6 +239,14 @@ func _on_settings_back_pressed() -> void:
 func _on_settings_volumes_changed(music_value: int, sound_value: int) -> void:
 	state.music_volume = music_value
 	state.sound_volume = sound_value
+	if audio != null:
+		audio.set_volumes(music_value, sound_value)
+	state.save_progress()
+
+func _on_settings_haptics_changed(enabled: bool) -> void:
+	state.haptics_enabled = enabled
+	if audio != null:
+		audio.set_haptics_enabled(enabled)
 	state.save_progress()
 
 func _on_play_pressed() -> void:
@@ -348,18 +369,25 @@ func _apply_orbit_press_after_frame(value: int, op: String, item_id: String) -> 
 		unlock_orbit_input()
 		return
 	if not OperationLogic.can_apply(state.current_number, value, op):
+		AudioManagerScript.play_invalid()
 		state.is_level_failed = is_current_level_failed()
 		refresh_game_screen()
 		await unlock_orbit_input_after_animation()
 		return
 
+	AudioManagerScript.play_orbit_select()
 	state.current_number = OperationLogic.apply(state.current_number, value, op)
 	state.moves_used += 1
 	remove_orbit_item(value, op, item_id)
 	if state.current_number == state.target_number:
 		complete_level()
 	else:
-		state.is_level_failed = is_current_level_failed()
+		var no_valid_moves := not has_any_valid_orbit_item()
+		var failed_now := is_current_level_failed()
+		if failed_now and not state.is_level_failed and no_valid_moves:
+			AudioManagerScript.play_invalid()
+			AudioManagerScript.play_no_valid_moves_haptic()
+		state.is_level_failed = failed_now
 		refresh_game_screen()
 	await unlock_orbit_input_after_animation()
 
@@ -371,6 +399,7 @@ func unlock_orbit_input_after_animation() -> void:
 	orbit_input_locked = false
 
 func complete_level() -> void:
+	AudioManagerScript.play_level_complete()
 	var stars: int = StarCalculator.calculate(state.moves_used, active_level_data())
 	if tutorial_mode:
 		var was_tutorial_completed := state.is_tutorial_completed(tutorial_index)
@@ -432,7 +461,11 @@ func _on_hint_requested() -> void:
 	if tutorial_mode:
 		return
 	if state.has_cached_hint_for_current_move():
-		game_screen.show_hint_result(state.cached_hint_text, state.hint_points)
+		var cached_target := hint_target_from_text(state.cached_hint_text)
+		if cached_target.is_empty():
+			game_screen.show_hint_result(state.cached_hint_text, state.hint_points)
+		else:
+			game_screen.reveal_hint_result(state.cached_hint_text, state.hint_points, cached_target)
 		return
 
 	var hint_text: String = HintSolverScript.next_hint_text(state.current_number, state.target_number, state.moves_used, orbit_items, active_level_data())
@@ -443,12 +476,14 @@ func _on_hint_requested() -> void:
 		return
 
 	if not state.can_afford_hint():
+		AudioManagerScript.play_invalid()
 		game_screen.show_insufficient_hint_balance(state.hint_points)
 		return
 	if state.spend_hint():
+		AudioManagerScript.play_hint_reveal()
 		state.cache_hint(hint_text)
 		state.save_progress()
-		game_screen.show_hint_result(hint_text, state.hint_points)
+		game_screen.reveal_hint_result(hint_text, state.hint_points, hint_target_from_text(hint_text))
 		refresh_game_screen()
 
 func _on_hint_ad_requested() -> void:
@@ -457,6 +492,54 @@ func _on_hint_ad_requested() -> void:
 	state.hint_points += GameState.HINT_COST
 	state.save_progress()
 	_on_hint_requested()
+
+func hint_target_from_text(hint_text: String) -> Dictionary:
+	var parsed := parse_hint_move(hint_text)
+	if parsed.is_empty():
+		return {}
+	var op := str(parsed["op"])
+	var value := int(parsed["value"])
+	for raw_item in orbit_items:
+		var item: Dictionary = raw_item as Dictionary
+		if str(item.get("op", "")) != op or int(item.get("value", 0)) != value:
+			continue
+		if not OperationLogic.can_apply(state.current_number, value, op):
+			continue
+		return {
+			"id": str(item.get("id", "")),
+			"op": op,
+			"value": value
+		}
+	return parsed
+
+func parse_hint_move(hint_text: String) -> Dictionary:
+	var marker := "Next move:"
+	var idx := hint_text.find(marker)
+	if idx < 0:
+		return {}
+	var tail := hint_text.substr(idx + marker.length()).strip_edges()
+	var parts := tail.split(" ", false)
+	if parts.size() < 2:
+		return {}
+	var op := op_from_hint_symbol(str(parts[0]))
+	if op.is_empty():
+		return {}
+	return {
+		"op": op,
+		"value": int(parts[1])
+	}
+
+func op_from_hint_symbol(symbol: String) -> String:
+	match symbol:
+		"+":
+			return "add"
+		"−", "-":
+			return "subtract"
+		"×", "x", "*":
+			return "multiply"
+		"÷", "/":
+			return "divide"
+	return ""
 
 func active_level_data() -> Dictionary:
 	return tutorial_levels[tutorial_index] if tutorial_mode else state.current_level_data()

@@ -20,6 +20,7 @@ var cached_hint_move_index: int = -1
 var cached_hint_text: String = ""
 var music_volume: int = 80
 var sound_volume: int = 80
+var haptics_enabled: bool = true
 var theme: String = "light"
 var language: String = "en"
 
@@ -37,6 +38,7 @@ func setup(level_data: Array, load_saved: bool = true) -> void:
 	cached_hint_text = ""
 	music_volume = 80
 	sound_volume = 80
+	haptics_enabled = true
 	theme = "light"
 	language = "en"
 	star_ratings.resize(levels.size())
@@ -138,6 +140,7 @@ func save_progress() -> void:
 		"has_played": has_played,
 		"music_volume": music_volume,
 		"sound_volume": sound_volume,
+		"haptics_enabled": haptics_enabled,
 		"theme": theme,
 		"language": language
 	}
@@ -163,6 +166,7 @@ func load_save_v1(data: Dictionary) -> void:
 	has_played = bool(data.get("has_played", has_played))
 	music_volume = int(clamp(int(data.get("music_volume", music_volume)), 0, 100))
 	sound_volume = int(clamp(int(data.get("sound_volume", sound_volume)), 0, 100))
+	haptics_enabled = bool(data.get("haptics_enabled", haptics_enabled))
 	theme = "dark" if str(data.get("theme", theme)) == "dark" else "light"
 	language = str(data.get("language", language))
 	load_stars_from_ids(data.get("stars_by_level_id", {}))

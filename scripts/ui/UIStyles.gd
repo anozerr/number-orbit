@@ -1,6 +1,8 @@
 class_name UIStyles
 extends RefCounted
 
+const AudioManagerScript = preload("res://scripts/audio/AudioManager.gd")
+
 # ============================================================================
 # Theme-aware design system ("Soft Glass Indigo").
 #
@@ -613,7 +615,10 @@ static func add_press_animation(button: Button, highlight_radius: int = -1) -> v
 	button.mouse_exited.connect(func() -> void: _hover_highlight(button, false))
 	# Press = a hold: shrink on button-down, spring back on button-up (not a
 	# one-shot bounce on click), so a held button stays shrunk.
-	button.button_down.connect(func() -> void: press_hold(button, true))
+	button.button_down.connect(func() -> void:
+		AudioManagerScript.play_ui_tap()
+		press_hold(button, true)
+	)
 	button.button_up.connect(func() -> void: press_hold(button, false))
 
 # Press-hold feedback: the control shrinks while held (pressed=true) and springs

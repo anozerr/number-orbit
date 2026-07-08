@@ -54,6 +54,8 @@ static var _tables: Dictionary = {
 		"settings.title": "Настройки",
 		"settings.music": "Музыка",
 		"settings.sound": "Звук",
+		"settings.haptics": "Виброотклик",
+		"settings.haptics_note": "(Звуковой Тест)",
 		"settings.appearance": "ОФОРМЛЕНИЕ",
 		"settings.light": "Светлая",
 		"settings.dark": "Тёмная",
