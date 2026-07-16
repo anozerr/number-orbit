@@ -7,14 +7,19 @@ const AudioManagerScript = preload("res://scripts/audio/AudioManager.gd")
 signal back_pressed
 signal settings_pressed
 signal level_selected(level_number: int)
-signal unlock_with_ad_requested(level_number: int)
+signal skip_level_requested(level_number: int)
+signal ad_reward_requested(level_number: int)
 
 var locked_popup: Control
 var locked_popup_panel: Panel
 var locked_popup_body: Label
+var locked_popup_balance: Label
+var locked_popup_unlock_button: Button
 var locked_popup_ad_button: Button
 var locked_popup_close_button: Button
 var locked_popup_level_number: int = -1
+var locked_popup_skippable := false
+var locked_popup_insufficient := false
 var last_scroll: ScrollContainer
 var content_width := 940.0
 
@@ -31,11 +36,16 @@ const LEVEL_STAR_Y_RATIO := 0.65
 # the unified bottom line so a row is still fully opaque AT the line and only
 # fades past it (fade completing on the line made the page look shorter).
 const SCROLL_FADE_PX := 100.0
+const LOCKED_POPUP_HEIGHT := 650.0
+# Cancel ends at y=888 in the actionable layout; 968 leaves the same deliberate
+# 80px bottom breathing room used by the popup's horizontal padding.
+const UNLOCK_POPUP_HEIGHT := 968.0
 
 # Cached args so a viewport resize can re-lay out.
 var _star_ratings: Array = []
 var _max_unlocked := 1
 var _tutorial_completed: Array = []
+var _lumens := 0
 var _has_data := false
 
 func _ready() -> void:
@@ -44,16 +54,27 @@ func _ready() -> void:
 
 func _on_viewport_resized() -> void:
 	if visible and _has_data:
-		rebuild_level_difficulties(_star_ratings, _max_unlocked, _tutorial_completed)
+		var previous_scroll := last_scroll.scroll_vertical if is_instance_valid(last_scroll) else 0
+		var reopen_popup := is_instance_valid(locked_popup) and locked_popup.visible
+		var reopen_level := locked_popup_level_number
+		var reopen_skippable := locked_popup_skippable
+		rebuild_level_difficulties(_star_ratings, _max_unlocked, _tutorial_completed, _lumens)
+		if is_instance_valid(last_scroll):
+			last_scroll.set_deferred("scroll_vertical", previous_scroll)
+		if reopen_popup:
+			show_locked_level_popup(reopen_level, reopen_skippable, true)
 
-func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tutorial_completed: Array = []) -> void:
+func set_lumens(value: int) -> void:
+	_lumens = value
+
+func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tutorial_completed: Array = [], lumens: int = 0) -> void:
 	_star_ratings = star_ratings
 	_max_unlocked = max_unlocked_level
 	_tutorial_completed = tutorial_completed
+	_lumens = lumens
 	_has_data = true
 
-	for child in get_children():
-		child.queue_free()
+	Layout.clear_children_for_rebuild(self)
 	last_scroll = null
 
 	var col := Layout.content_column(self)
@@ -62,9 +83,11 @@ func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tu
 
 	# --- Header ---
 	var back := UIStyles.back_button(self, Vector2(maxf(Layout.SIDE_MARGIN, col.position.x), top + 74.0))
+	back.set_meta(&"screen_transition_role", &"back")
 	back.pressed.connect(func(): back_pressed.emit())
 
 	var settings_btn := UIStyles.circle_button(self, Vector2(col.position.x + content_width - 127.0, top + 74.0), 127.0)
+	settings_btn.set_meta(&"screen_transition_role", &"settings")
 	settings_btn.pressed.connect(func(): settings_pressed.emit())
 	UIStyles.icon(UIStyles.ICON_GEAR, settings_btn, Vector2(33, 33), Vector2(60, 60), UIStyles.TEXT)
 
@@ -210,7 +233,7 @@ func add_tutorials_section(parent: Control, y: float, tutorial_completed: Array)
 	btn.add_child(name_lbl)
 
 	var desc_lbl := Label.new()
-	desc_lbl.text = Locale.t("levels.howto.sub", "Tutorial · order, hints, operators")
+	desc_lbl.text = Locale.t("levels.howto.sub", "Tutorial · operations and order")
 	desc_lbl.position = Vector2(261, 148)
 	desc_lbl.size = Vector2(content_width - 320, 50)
 	desc_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -244,19 +267,28 @@ func add_difficulty_section(parent: Control, difficulty_index: int, y: float, st
 	var row_gap: float = m["row_gap"]
 	var start_y := y + 93.0
 
-	for i in range(LevelData.LEVELS_PER_DIFFICULTY):
-		var local_level: int = i + 1
-		var global_level: int = difficulty_index * LevelData.LEVELS_PER_DIFFICULTY + local_level
+	var count := LevelData.difficulty_level_count(difficulty_index)
+	var start_offset := LevelData.difficulty_start_offset(difficulty_index)
+	# Any single-level band is rendered as one full-width tile.
+	var wide := count == 1
+
+	for i in range(count):
+		var global_level: int = start_offset + i + 1
 		var unlocked: bool = tutorials_done and global_level <= max_unlocked_level
 		var rating: int = int(star_ratings[global_level - 1]) if global_level - 1 < star_ratings.size() else 0
 		var completed: bool = rating > 0
-		var col_i := i % 3
-		var row_i := int(float(i) / 3.0)
-		var cx := pad + col_i * (chip + gutter)
-		var cy := start_y + row_i * row_gap
-		build_level_chip(parent, Vector2(cx, cy), Vector2(chip, chip), global_level, rating, completed, unlocked, diff_color, tutorials_done, max_unlocked_level)
+		var cx := pad
+		var cy := start_y
+		var chip_w := content_width
+		if not wide:
+			var col_i := i % 3
+			var row_i := int(float(i) / 3.0)
+			cx = pad + col_i * (chip + gutter)
+			cy = start_y + row_i * row_gap
+			chip_w = chip
+		build_level_chip(parent, Vector2(cx, cy), Vector2(chip_w, chip), global_level, rating, completed, unlocked, diff_color, tutorials_done, max_unlocked_level)
 
-	var rows := int(ceil(float(LevelData.LEVELS_PER_DIFFICULTY) / 3.0))
+	var rows := 1 if wide else int(ceil(float(count) / 3.0))
 	return start_y + float(rows) * row_gap - (row_gap - chip)
 
 # Shared chip grid metrics (inset by GRID_PAD so chips aren't clipped by the
@@ -275,11 +307,11 @@ func build_level_chip(parent: Control, pos: Vector2, chip_size: Vector2, global_
 	if unlocked:
 		# Exception: locked levels give no hover/press feedback (they only open the
 		# unlock popup on tap), so the highlight is attached to unlocked chips only.
-		UIStyles.add_press_animation(btn)
+		UIStyles.add_press_animation(btn, UIStyles.CORNER)
 		btn.pressed.connect(_on_level_button_pressed.bind(global_level))
 	else:
-		var can_watch_ad := tutorials_done and global_level == max_unlocked_level + 1
-		btn.pressed.connect(show_locked_level_popup.bind(global_level, can_watch_ad))
+		var skippable := tutorials_done and global_level == max_unlocked_level + 1
+		btn.pressed.connect(show_locked_level_popup.bind(global_level, skippable))
 	parent.add_child(btn)
 
 	var num := Label.new()
@@ -312,7 +344,7 @@ func build_level_chip(parent: Control, pos: Vector2, chip_size: Vector2, global_
 		btn.add_child(caption)
 
 func style_level_chip(button: Button, completed: bool, unlocked: bool, diff_color: Color) -> void:
-	var normal: StyleBoxFlat
+	var normal: StyleBox
 	if not unlocked:
 		normal = UIStyles.locked_panel()
 		button.modulate = Color(1, 1, 1, 0.72)
@@ -374,11 +406,14 @@ func row_center_for_level(level_number: int) -> float:
 	var row_gap: float = m["row_gap"]
 	var tutorials_height := 8.0 + 150.0
 	var section_gap := 70.0
-	var rows := int(ceil(float(LevelData.LEVELS_PER_DIFFICULTY) / 3.0))
-	var difficulty_height := 82.0 + float(rows) * row_gap - (row_gap - chip)
 	var difficulty_index := LevelData.difficulty_index_for_level(level_number)
 	var local_index := LevelData.local_level_number(level_number) - 1
-	var section_y := tutorials_height + section_gap + float(difficulty_index) * (difficulty_height + section_gap)
+	# Bands vary in length now, so walk the preceding sections to find this one's top.
+	var section_y := tutorials_height + section_gap
+	for i in range(difficulty_index):
+		var rows_i := int(ceil(float(LevelData.difficulty_level_count(i)) / 3.0))
+		var height_i := 82.0 + float(rows_i) * row_gap - (row_gap - chip)
+		section_y += height_i + section_gap
 	var start_y := section_y + 82.0
 	var row := int(float(local_index) / 3.0)
 	return start_y + float(row) * row_gap + chip * 0.5
@@ -405,7 +440,7 @@ func build_locked_level_popup() -> void:
 
 	var vp := Layout.viewport_size(self)
 	var pw := PopupFactoryScript.popup_width(vp.x)
-	var ph := 983.0
+	var ph := LOCKED_POPUP_HEIGHT
 	var panel := Panel.new()
 	panel.name = "PopupPanel"
 	panel.position = Vector2((vp.x - pw) * 0.5, (vp.y - ph) * 0.5)
@@ -420,22 +455,120 @@ func build_locked_level_popup() -> void:
 
 	locked_popup_body = PopupFactoryScript.body(panel, pw, "", 268.0)
 
+	locked_popup_balance = Label.new()
+	locked_popup_balance.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	locked_popup_balance.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(locked_popup_balance, UIStyles.FONT_SEMIBOLD, 40, UIStyles.MUTED)
+	panel.add_child(locked_popup_balance)
+
+	# One primary slot with two mutually-exclusive states: Unlock when the player
+	# can afford it, or Watch Ad when the balance is insufficient.
+	locked_popup_unlock_button = PopupFactoryScript.primary_button(Locale.t("levels.locked.unlock", "Unlock"), pw, 500.0)
+	locked_popup_unlock_button.pressed.connect(_on_locked_popup_unlock_pressed)
+	panel.add_child(locked_popup_unlock_button)
+
 	locked_popup_ad_button = PopupFactoryScript.primary_button(Locale.t("levels.locked.watch_ad", "Watch Ad"), pw, 500.0)
-	locked_popup_ad_button.pressed.connect(func(): unlock_with_ad_requested.emit(locked_popup_level_number))
+	locked_popup_ad_button.pressed.connect(func(): ad_reward_requested.emit(locked_popup_level_number))
 	panel.add_child(locked_popup_ad_button)
 
 	locked_popup_close_button = PopupFactoryScript.secondary_button(Locale.t("common.cancel", "Cancel"), pw, 735.0)
 	locked_popup_close_button.pressed.connect(hide_locked_level_popup)
 	panel.add_child(locked_popup_close_button)
 
-func show_locked_level_popup(level_number: int, can_watch_ad: bool) -> void:
+func show_locked_level_popup(level_number: int, skippable: bool, immediate: bool = false) -> void:
 	if not is_instance_valid(locked_popup):
 		build_locked_level_popup()
-	AudioManagerScript.play_locked_level_haptic()
+	if not immediate:
+		AudioManagerScript.play_locked_level_haptic()
 	locked_popup_level_number = level_number
-	locked_popup_body.text = Locale.t("levels.locked.body", "Complete the previous level%s to open it.") % (Locale.t("levels.locked.or_ad", " or watch an ad") if can_watch_ad else "")
-	locked_popup_ad_button.visible = can_watch_ad
-	PopupFactoryScript.show_sheet(locked_popup, locked_popup_panel, PopupFactoryScript.find_scrim(locked_popup))
+	locked_popup_skippable = skippable
+	locked_popup_insufficient = skippable and _lumens < skip_cost_for(level_number)
+	layout_locked_level_popup(skippable)
+	update_locked_level_popup_content()
+	var overlay := PopupFactoryScript.find_scrim(locked_popup)
+	if immediate:
+		PopupFactoryScript.show_sheet_immediate(locked_popup, locked_popup_panel, overlay)
+	else:
+		PopupFactoryScript.show_sheet(locked_popup, locked_popup_panel, overlay)
+
+func _on_locked_popup_unlock_pressed() -> void:
+	if not locked_popup_skippable:
+		return
+	if _lumens >= skip_cost_for(locked_popup_level_number):
+		skip_level_requested.emit(locked_popup_level_number)
+		return
+	locked_popup_insufficient = true
+	AudioManagerScript.play_invalid()
+	update_locked_level_popup_content()
+
+func update_locked_level_popup_content() -> void:
+	var cost := skip_cost_for(locked_popup_level_number)
+	var affordable := _lumens >= cost
+	# Reset the body typography/layout before selecting a state; the insufficient
+	# explanation uses a slightly smaller font and more vertical room.
+	locked_popup_body.position = Vector2(PopupFactoryScript.POPUP_PAD, 268.0)
+	locked_popup_body.size = Vector2(locked_popup_panel.size.x - PopupFactoryScript.POPUP_PAD * 2.0, 120.0)
+	locked_popup_balance.position.y = 420.0
+	UIStyles.apply_font(locked_popup_body, UIStyles.FONT_SEMIBOLD, 45, UIStyles.MUTED)
+	if not locked_popup_skippable:
+		locked_popup_body.text = Locale.t("levels.locked.body", "Complete the previous level to open it.")
+		locked_popup_balance.visible = false
+		locked_popup_unlock_button.visible = false
+		locked_popup_ad_button.visible = false
+	elif locked_popup_insufficient and not affordable:
+		locked_popup_body.position.y = 246.0
+		locked_popup_body.size.y = 180.0
+		UIStyles.apply_font(locked_popup_body, UIStyles.FONT_SEMIBOLD, 40, UIStyles.MUTED)
+		locked_popup_body.text = Locale.t(
+			"levels.locked.insufficient",
+			"Unlocking this level costs %d Lumens. You don't have enough — watch an ad to get %d Lumens."
+		) % [cost, GameState.AD_REWARD_LUMENS]
+		locked_popup_balance.text = Locale.t("hint.balance_short", "Balance: %d / %d Lumens") % [_lumens, cost]
+		locked_popup_balance.position.y = 436.0
+		locked_popup_balance.visible = true
+		locked_popup_unlock_button.visible = false
+		locked_popup_ad_button.text = Locale.t("levels.locked.watch_ad", "Watch Ad")
+		locked_popup_ad_button.visible = true
+	else:
+		locked_popup_insufficient = false
+		locked_popup_body.position.y = 274.0
+		locked_popup_body.size.y = 180.0
+		UIStyles.apply_font(locked_popup_body, UIStyles.FONT_SEMIBOLD, 42, UIStyles.MUTED)
+		locked_popup_body.text = Locale.t(
+			"levels.locked.body_unlock",
+			"Beat the previous level to open it — or unlock it now for %d Lumens.",
+		) % cost
+		locked_popup_balance.text = Locale.t("hint.balance_short", "Balance: %d / %d Lumens") % [_lumens, cost]
+		locked_popup_balance.visible = false
+		locked_popup_unlock_button.text = Locale.t("levels.locked.unlock", "Unlock")
+		locked_popup_unlock_button.visible = true
+		locked_popup_ad_button.visible = false
+
+func skip_cost_for(level_number: int) -> int:
+	var band := LevelData.difficulty_index_for_level(level_number)
+	if band < 0 or band >= GameState.BAND_SKIP_COST.size():
+		return 0
+	return int(GameState.BAND_SKIP_COST[band])
+
+func layout_locked_level_popup(skippable: bool) -> void:
+	if not is_instance_valid(locked_popup_panel):
+		return
+	var panel_height := UNLOCK_POPUP_HEIGHT if skippable else LOCKED_POPUP_HEIGHT
+	var viewport_size := Layout.viewport_size(self)
+	locked_popup_panel.size.y = panel_height
+	locked_popup_panel.position = (viewport_size - locked_popup_panel.size) * 0.5
+	var pw := locked_popup_panel.size.x
+	locked_popup_body.position = Vector2(PopupFactoryScript.POPUP_PAD, 268.0)
+	locked_popup_body.size = Vector2(pw - PopupFactoryScript.POPUP_PAD * 2.0, 120.0)
+	if skippable:
+		locked_popup_balance.position = Vector2(0, 420.0)
+		locked_popup_balance.size = Vector2(pw, 58.0)
+		locked_popup_unlock_button.position.y = 510.0
+		locked_popup_ad_button.position.y = 510.0
+		locked_popup_close_button.position.y = 720.0
+	else:
+		locked_popup_close_button.position.y = 430.0
+	PopupFactoryScript.register_sheet_panel(locked_popup_panel)
 
 func hide_locked_level_popup() -> void:
 	if is_instance_valid(locked_popup) and is_instance_valid(locked_popup_panel):

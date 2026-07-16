@@ -3,11 +3,24 @@ extends Control
 
 const PopupFactoryScript = preload("res://scripts/ui/PopupFactory.gd")
 
+class HintMoveOutline:
+	extends Control
+
+	var outline_color: Color = Color.WHITE
+	var outline_width := 4.0
+
+	func _draw() -> void:
+		var radius := minf(size.x, size.y) * 0.5 - outline_width * 0.5
+		if radius <= 0.0:
+			return
+		draw_arc(size * 0.5, radius, 0.0, TAU, 192, outline_color, outline_width, true)
+
 signal hint_requested
 signal hint_ad_requested
 
-var current_hint_points: int = 0
+var current_lumens: int = 0
 var current_moves: int = 0
+var current_hint_cost: int = 0
 var cached_popup_hint_text: String = ""
 var cached_popup_move_index: int = -1
 
@@ -20,10 +33,13 @@ var ad_button: Button
 var cancel_button: Button
 var move_circle: Panel
 var move_label: Label
+var move_outline: HintMoveOutline
+
+const DEFAULT_PANEL_HEIGHT := 1003.0
+const COMPACT_RESULT_PANEL_HEIGHT := 740.0
 
 func build(viewport_width: float) -> void:
-	for child in get_children():
-		child.queue_free()
+	Layout.clear_children_for_rebuild(self)
 	z_index = 100
 	visible = false
 
@@ -33,7 +49,7 @@ func build(viewport_width: float) -> void:
 	var pw := PopupFactoryScript.popup_width(viewport_width)
 	panel = Panel.new()
 	panel.name = "PopupPanel"
-	panel.size = Vector2(pw, 1003)
+	panel.size = Vector2(pw, DEFAULT_PANEL_HEIGHT)
 	PopupFactoryScript.apply_panel_glass(panel)
 	PopupFactoryScript.register_sheet_panel(panel)
 	add_child(panel)
@@ -41,7 +57,7 @@ func build(viewport_width: float) -> void:
 	PopupFactoryScript.badge(panel, pw, Color("#FFD98F"), Color("#F5A93D"), UIStyles.ICON_BULB, 101.0)
 	PopupFactoryScript.title(panel, pw, Locale.t("hint.title", "HINT"))
 
-	body_label = PopupFactoryScript.body(panel, pw, "Spend bulbs to reveal one next move.", 264.0, 130.0)
+	body_label = PopupFactoryScript.body(panel, pw, "Spend Lumens to reveal one next move.", 264.0, 130.0)
 
 	move_circle = Panel.new()
 	move_circle.position = Vector2(pw * 0.5 - 87, 350)
@@ -57,12 +73,18 @@ func build(viewport_width: float) -> void:
 	UIStyles.apply_font(move_label, UIStyles.FONT_EXTRABOLD, 60, UIStyles.TEXT)
 	move_circle.add_child(move_label)
 
+	move_outline = HintMoveOutline.new()
+	move_outline.size = move_circle.size
+	move_outline.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	move_outline.z_index = 10
+	move_circle.add_child(move_outline)
+
 	balance_label = Label.new()
 	balance_label.position = Vector2(0, 430)
 	balance_label.size = Vector2(pw, 58)
 	balance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	balance_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(balance_label, UIStyles.FONT_SEMIBOLD, 44, UIStyles.MUTED)
+	UIStyles.apply_font(balance_label, UIStyles.FONT_SEMIBOLD, 40, UIStyles.MUTED)
 	panel.add_child(balance_label)
 
 	buy_button = PopupFactoryScript.primary_button(Locale.t("hint.use", "Use Hint"), pw, 520.0)
@@ -78,9 +100,10 @@ func build(viewport_width: float) -> void:
 	cancel_button.pressed.connect(func(): hide_popup())
 	panel.add_child(cancel_button)
 
-func configure_state(moves: int, hint_points: int) -> void:
+func configure_state(moves: int, lumens: int, hint_cost: int) -> void:
 	current_moves = moves
-	current_hint_points = hint_points
+	current_lumens = lumens
+	current_hint_cost = hint_cost
 	if cached_popup_move_index != current_moves:
 		cached_popup_hint_text = ""
 		cached_popup_move_index = -1
@@ -94,48 +117,76 @@ func layout_to_viewport(viewport_size: Vector2) -> void:
 		PopupFactoryScript.register_sheet_panel(panel)
 
 func show_prompt() -> void:
+	var was_visible := visible
+	set_panel_height(DEFAULT_PANEL_HEIGHT)
 	reset_layout()
 	if cached_popup_move_index == current_moves and not cached_popup_hint_text.is_empty():
 		apply_result_text(cached_popup_hint_text)
-		balance_label.text = Locale.t("hint.balance", "Balance: %d bulbs") % current_hint_points
+		balance_label.text = Locale.t("hint.balance", "Balance: %d Lumens") % current_lumens
 		buy_button.visible = false
 		ad_button.visible = false
 		cancel_button.text = Locale.t("common.back", "Back")
 	else:
-		body_label.text = Locale.t("hint.body", "Spend %d bulbs to reveal the next winning move.") % GameState.HINT_COST
+		body_label.position.y = 314.0
+		body_label.text = Locale.t("hint.body", "Spend %d Lumens to analyze this position.") % current_hint_cost
 		hide_move_circle()
-		balance_label.text = Locale.t("hint.balance", "Balance: %d bulbs") % current_hint_points
+		balance_label.text = Locale.t("hint.balance", "Balance: %d Lumens") % current_lumens
+		balance_label.visible = false
 		buy_button.visible = true
 		ad_button.visible = false
 		cancel_button.text = Locale.t("common.cancel", "Cancel")
-	PopupFactoryScript.show_sheet(self, panel, overlay)
+	show_popup_if_hidden(was_visible)
 
 func show_result(message: String, balance: int) -> void:
-	current_hint_points = balance
+	var was_visible := visible
+	current_lumens = balance
 	cache_result(message, balance)
+	var has_winning_move := not parse_hint_move(message).is_empty()
+	set_panel_height(DEFAULT_PANEL_HEIGHT if has_winning_move else COMPACT_RESULT_PANEL_HEIGHT)
 	reset_layout()
 	apply_result_text(message)
-	balance_label.text = Locale.t("hint.balance", "Balance: %d bulbs") % current_hint_points
+	balance_label.text = Locale.t("hint.balance", "Balance: %d Lumens") % current_lumens
+	balance_label.visible = true
 	buy_button.visible = false
 	ad_button.visible = false
 	cancel_button.text = Locale.t("common.back", "Back")
-	PopupFactoryScript.show_sheet(self, panel, overlay)
+	if not has_winning_move:
+		body_label.position = Vector2(PopupFactoryScript.POPUP_PAD, 264.0)
+		body_label.size = Vector2(panel.size.x - PopupFactoryScript.POPUP_PAD * 2.0, 126.0)
+		balance_label.position = Vector2(0, 410.0)
+		cancel_button.position.y = 498.0
+	show_popup_if_hidden(was_visible)
 
 func show_insufficient_balance(balance: int) -> void:
-	current_hint_points = balance
+	var was_visible := visible
+	current_lumens = balance
 	cached_popup_hint_text = ""
 	cached_popup_move_index = -1
+	set_panel_height(DEFAULT_PANEL_HEIGHT)
 	reset_layout()
-	body_label.text = Locale.t("hint.insufficient", "Not enough bulbs for a hint.")
+	body_label.position = Vector2(PopupFactoryScript.POPUP_PAD, 246.0)
+	body_label.size = Vector2(panel.size.x - PopupFactoryScript.POPUP_PAD * 2.0, 164.0)
+	UIStyles.apply_font(body_label, UIStyles.FONT_SEMIBOLD, 38, UIStyles.MUTED)
+	body_label.text = Locale.t(
+		"hint.insufficient",
+		"Not enough Lumens for a hint. Watch an ad to get %d Lumens."
+	) % GameState.AD_REWARD_LUMENS
 	hide_move_circle()
-	balance_label.text = Locale.t("hint.balance_short", "Balance: %d / %d bulbs") % [current_hint_points, GameState.HINT_COST]
+	balance_label.position.y = 420.0
+	balance_label.text = Locale.t("hint.balance_short", "Balance: %d / %d Lumens") % [current_lumens, current_hint_cost]
+	balance_label.visible = true
 	buy_button.visible = false
+	ad_button.text = Locale.t("levels.locked.watch_ad", "Watch Ad")
 	ad_button.visible = true
 	cancel_button.text = Locale.t("common.cancel", "Cancel")
-	PopupFactoryScript.show_sheet(self, panel, overlay)
+	show_popup_if_hidden(was_visible)
+
+func show_popup_if_hidden(was_visible: bool) -> void:
+	if not was_visible:
+		PopupFactoryScript.show_pop(self, panel, overlay)
 
 func cache_result(message: String, balance: int) -> void:
-	current_hint_points = balance
+	current_lumens = balance
 	cached_popup_hint_text = message
 	cached_popup_move_index = current_moves
 
@@ -146,9 +197,21 @@ func reset_layout() -> void:
 	var pw := panel.size.x
 	body_label.position = Vector2(PopupFactoryScript.POPUP_PAD, 264)
 	body_label.size = Vector2(pw - PopupFactoryScript.POPUP_PAD * 2.0, 130)
+	UIStyles.apply_font(body_label, UIStyles.FONT_SEMIBOLD, 45, UIStyles.MUTED)
 	balance_label.position = Vector2(0, 430)
 	balance_label.size = Vector2(pw, 58)
+	balance_label.visible = true
+	buy_button.position.y = 520.0
+	ad_button.position.y = 520.0
+	cancel_button.position.y = 755.0
 	hide_move_circle()
+
+func set_panel_height(height: float) -> void:
+	if panel == null:
+		return
+	panel.size.y = height
+	panel.position = (size - panel.size) * 0.5
+	PopupFactoryScript.register_sheet_panel(panel)
 
 func apply_result_text(message: String) -> void:
 	var parsed := parse_hint_move(message)
@@ -204,12 +267,14 @@ func show_move_circle(op: String, value: int) -> void:
 		return
 	move_circle.visible = true
 	move_circle.position = Vector2(panel.size.x * 0.5 - 87, 390)
-	var style: StyleBoxFlat = UIStyles.card(UIStyles.operation_bg(op), UIStyles.operation_border(op), 90)
-	style.border_width_left = 4
-	style.border_width_right = 4
-	style.border_width_top = 4
-	style.border_width_bottom = 4
+	var style := StyleBoxFlat.new()
+	style.bg_color = UIStyles.operation_bg(op)
+	UIStyles._set_radius(style, 85)
 	move_circle.add_theme_stylebox_override("panel", style)
+	if move_outline != null:
+		move_outline.outline_color = UIStyles.operation_border(op)
+		move_outline.outline_width = 4.0
+		move_outline.queue_redraw()
 	move_label.text = str(value)
 	UIStyles.apply_font(move_label, UIStyles.FONT_BOLD, 50, UIStyles.operation_text(op))
 

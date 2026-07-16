@@ -23,15 +23,32 @@ const MAX_CONTENT_WIDTH := 1072.0
 const SIDE_MARGIN := 67.0
 const SAFE_PAD := 24.0
 
-# Visible viewport size in canvas units (>= BASE on the expanded axis).
+# Convert the drawable viewport size to the logical canvas exposed by
+# `canvas_items + expand`. Viewport.get_visible_rect() reports framebuffer
+# coordinates; using it directly makes a wide window look narrower than the
+# canvas and shifts every supposedly centered screen to the left.
+static func expanded_canvas_size(drawable_size: Vector2) -> Vector2:
+	if drawable_size.x <= 0.0 or drawable_size.y <= 0.0:
+		return BASE_SIZE
+	var stretch_scale := minf(drawable_size.x / BASE_WIDTH, drawable_size.y / BASE_HEIGHT)
+	if stretch_scale <= 0.0:
+		return BASE_SIZE
+	return drawable_size / stretch_scale
+
+# Visible viewport size in logical canvas units (>= BASE on the expanded axis).
 static func viewport_size(node: Node) -> Vector2:
 	var vp := node.get_viewport()
 	if vp == null:
 		return BASE_SIZE
-	var size := vp.get_visible_rect().size
-	if size.x <= 0.0 or size.y <= 0.0:
-		return BASE_SIZE
-	return size
+	return expanded_canvas_size(vp.get_visible_rect().size)
+
+# A rebuild must detach its previous visual tree immediately. `queue_free()`
+# alone leaves old and new controls visible together until the end of the frame,
+# which produces one-frame seams/duplicates during continuous window resizing.
+static func clear_children_for_rebuild(parent: Node) -> void:
+	for child in parent.get_children():
+		parent.remove_child(child)
+		child.queue_free()
 
 static func viewport_center(node: Node) -> Vector2:
 	return viewport_size(node) * 0.5

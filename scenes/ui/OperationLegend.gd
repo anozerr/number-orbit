@@ -3,9 +3,13 @@ extends Control
 
 signal operator_info(text: String)
 
-const LEGEND_OPS := ["add", "subtract", "multiply", "divide", "unavailable"]
+# 5.4: без «unavailable» — серый спутник и так читается (цветной ободок из 1.2).
+const LEGEND_OPS := ["add", "subtract", "multiply", "divide"]
 const CARD_GAP := 27.0
 const CARD_HEIGHT := 147.0
+
+# 5.3: операторы, реально показываемые на текущем уровне (в порядке LEGEND_OPS).
+var active_ops: Array = LEGEND_OPS.duplicate()
 
 func _ready() -> void:
 	if size.x <= 0:
@@ -16,19 +20,35 @@ func _ready() -> void:
 # Resize to a given width and rebuild the single-row legend.
 func set_width(width: float) -> void:
 	size = Vector2(width, CARD_HEIGHT)
-	configure_ops()
+	rebuild_cards()
 
-func configure_ops(_ops: Array = []) -> void:
-	for child in get_children():
-		child.queue_free()
-	# Always show all five operators, including "unavailable".
-	for i in range(LEGEND_OPS.size()):
-		add_card(str(LEGEND_OPS[i]), card_rect(i))
+# Build chips only for operators present in the current level. An empty list is
+# intentional for placeholder levels and therefore renders no operator chips.
+func configure_ops(ops: Array = []) -> void:
+	active_ops = _ordered_ops(ops)
+	rebuild_cards()
+
+func _ordered_ops(ops: Array) -> Array:
+	var result: Array = []
+	for op in LEGEND_OPS:
+		if ops.has(op):
+			result.append(op)
+	return result
+
+func rebuild_cards() -> void:
+	Layout.clear_children_for_rebuild(self)
+	for i in range(active_ops.size()):
+		add_card(str(active_ops[i]), card_rect(i))
 
 func card_rect(index: int) -> Rect2:
-	var count := LEGEND_OPS.size()
+	var count := maxi(active_ops.size(), 1)
 	var pill_w := (size.x - CARD_GAP * float(count - 1)) / float(count)
 	return Rect2(Vector2(float(index) * (pill_w + CARD_GAP), 0.0), Vector2(pill_w, CARD_HEIGHT))
+
+# Индекс чипа оператора среди показанных (-1, если оператора нет на уровне) — коуч
+# спотлайтит конкретный оператор по имени, без фиксированных индексов (5.3/5.4).
+func op_index(op: String) -> int:
+	return active_ops.find(op)
 
 func short_name(op: String) -> String:
 	match op:
@@ -36,7 +56,6 @@ func short_name(op: String) -> String:
 		"subtract": return Locale.t("op.chip.subtract", "Sub")
 		"multiply": return Locale.t("op.chip.multiply", "Mul")
 		"divide": return Locale.t("op.chip.divide", "Div")
-		"unavailable": return Locale.t("op.chip.unavailable", "Una")
 	return op.capitalize()
 
 func add_card(op: String, rect: Rect2) -> void:
@@ -44,12 +63,26 @@ func add_card(op: String, rect: Rect2) -> void:
 	button.text = ""
 	button.position = rect.position
 	button.size = rect.size
-	button.add_theme_stylebox_override("normal", legend_style(op))
-	button.add_theme_stylebox_override("hover", legend_style(op))
-	button.add_theme_stylebox_override("pressed", legend_style(op))
-	button.pressed.connect(func() -> void: operator_info.emit(short_info(op)))
-	UIStyles.add_press_animation(button)
+	button.focus_mode = Control.FOCUS_NONE
+	# The colored plate is a separate, static surface. Keeping it out of the
+	# Button's state stack prevents the one focused/last button from receiving a
+	# theme focus fill while its siblings keep their normal flat fill.
+	var empty := StyleBoxEmpty.new()
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		button.add_theme_stylebox_override(state, empty.duplicate())
+	button.pressed.connect(func() -> void:
+		operator_info.emit(short_info(op))
+	)
+	UIStyles.add_press_animation(button, 67)
 	add_child(button)
+
+	var plate := Panel.new()
+	plate.name = "Plate"
+	plate.position = Vector2.ZERO
+	plate.size = rect.size
+	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	plate.add_theme_stylebox_override("panel", legend_style(op))
+	button.add_child(plate)
 
 	var name_lbl := Label.new()
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -78,8 +111,7 @@ func legend_text_color(op: String) -> Color:
 func short_info(op: String) -> String:
 	match op:
 		"add": return Locale.t("op.info.add", "Green orbit numbers add.")
-		"subtract": return Locale.t("op.info.subtract", "Orange orbit numbers subtract.")
-		"multiply": return Locale.t("op.info.multiply", "Red orbit numbers multiply.")
-		"divide": return Locale.t("op.info.divide", "Blue divides — only if exact.")
-		"unavailable": return Locale.t("op.info.unavailable", "Grey can't be used right now.")
+		"subtract": return Locale.t("op.info.subtract", "Red orbit numbers subtract.")
+		"multiply": return Locale.t("op.info.multiply", "Blue orbit numbers multiply.")
+		"divide": return Locale.t("op.info.divide", "Orange divides — only if exact.")
 	return ""

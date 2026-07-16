@@ -28,7 +28,13 @@ func _ready() -> void:
 
 func _on_viewport_resized() -> void:
 	if visible:
+		var reopen_language := is_language_popup_open()
+		var reopen_reset := is_reset_popup_open()
 		build()
+		if reopen_language:
+			show_language_popup(true)
+		elif reopen_reset:
+			show_reset_popup(true)
 
 func configure(music_value: int, sound_value: int, theme_name: String = "light", language_code: String = "en", enable_haptics: bool = true) -> void:
 	var keep_language_popup_open := is_language_popup_open()
@@ -42,8 +48,7 @@ func configure(music_value: int, sound_value: int, theme_name: String = "light",
 		show_language_popup(true)
 
 func build() -> void:
-	for child in get_children():
-		child.queue_free()
+	Layout.clear_children_for_rebuild(self)
 	reset_popup = null
 	reset_popup_panel = null
 	language_popup = null
@@ -56,6 +61,7 @@ func build() -> void:
 
 	# --- Header (mockup: 275-tall row, circle centered at t+74) ---
 	var back_btn := UIStyles.back_button(self, Vector2(maxf(Layout.SIDE_MARGIN, cx), t + 74.0))
+	back_btn.set_meta(&"screen_transition_role", &"back")
 	back_btn.pressed.connect(func(): back_pressed.emit())
 
 	var title := Label.new()
@@ -127,78 +133,124 @@ func build_haptics_row(x: float, y: float, w: float) -> void:
 	row.size = Vector2(w, row_h)
 	row.toggle_mode = true
 	row.button_pressed = haptics_enabled
-	UIStyles.menu_button(row)
+	_apply_static_glass_button(row)
 	add_child(row)
 
 	var label_row := HBoxContainer.new()
 	label_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label_row.position = Vector2(67, 0)
-	label_row.size = Vector2(w - 290, row_h)
-	label_row.add_theme_constant_override("separation", 22)
+	label_row.size = Vector2(w - 300, row_h)
 	row.add_child(label_row)
 
+	var label_text := Locale.t("settings.haptics", "Haptic Feedback")
 	var label := Label.new()
-	label.text = Locale.t("settings.haptics", "Haptic Feedback")
+	label.text = label_text
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.custom_minimum_size.y = row_h
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	UIStyles.apply_font(label, UIStyles.FONT_BOLD, 50, UIStyles.TEXT)
 	label_row.add_child(label)
 
-	var note_color := UIStyles.MUTED
-	note_color.a *= 0.72
-	var note := Label.new()
-	note.text = Locale.t("settings.haptics_note", "(Sound Test)")
-	note.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	note.custom_minimum_size.y = row_h
-	note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UIStyles.apply_font(note, UIStyles.FONT_MEDIUM, 34, note_color)
-	label_row.add_child(note)
+	var track_x := w - 67.0 - 140.0
 
-	var track := Panel.new()
-	track.position = Vector2(w - 67.0 - 130.0, (row_h - 72.0) * 0.5)
-	track.size = Vector2(130, 72)
+	var track := Control.new()
+	track.position = Vector2(track_x, (row_h - 78.0) * 0.5)
+	track.size = Vector2(140, 78)
 	track.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(track)
 
+	var off_layer := Panel.new()
+	off_layer.size = track.size
+	off_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var off_style := StyleBoxFlat.new()
+	off_style.bg_color = Color(1, 1, 1, 0.10) if UIStyles.is_dark() else Color(UIStyles.PURPLE.r, UIStyles.PURPLE.g, UIStyles.PURPLE.b, 0.15)
+	UIStyles._set_radius(off_style, 39)
+	off_layer.add_theme_stylebox_override("panel", off_style)
+	track.add_child(off_layer)
+
+	var on_layer := Panel.new()
+	on_layer.size = track.size
+	on_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	on_layer.add_theme_stylebox_override("panel", UIStyles.gradient_style(
+		UIStyles.PRIMARY_TOP,
+		UIStyles.PRIMARY_BOTTOM,
+		39,
+		Vector2i(140, 78)
+	))
+	track.add_child(on_layer)
+
 	var knob := Panel.new()
-	knob.size = Vector2(54, 54)
-	knob.position.y = 9.0
+	knob.size = Vector2(66, 66)
+	knob.position.y = 6.0
 	knob.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var knob_style := StyleBoxFlat.new()
 	knob_style.bg_color = Color.WHITE
-	UIStyles._set_radius(knob_style, 27)
+	UIStyles._set_radius(knob_style, 33)
 	knob.add_theme_stylebox_override("panel", knob_style)
 	track.add_child(knob)
-	_apply_haptics_switch_visual(track, knob, haptics_enabled, false)
+	_apply_haptics_switch_visual(on_layer, knob, haptics_enabled, false)
 
 	row.toggled.connect(func(enabled: bool) -> void:
 		haptics_enabled = enabled
-		_apply_haptics_switch_visual(track, knob, enabled, true)
+		_apply_haptics_switch_visual(on_layer, knob, enabled, true)
 		haptics_changed.emit(enabled)
 		if enabled:
 			AudioManagerScript.confirm_haptics_enabled()
 	)
 
-func _apply_haptics_switch_visual(track: Panel, knob: Panel, enabled: bool, animate: bool) -> void:
-	if enabled:
-		track.add_theme_stylebox_override("panel", UIStyles.gradient_style(
-			UIStyles.PRIMARY_TOP,
-			UIStyles.PRIMARY_BOTTOM,
-			36,
-			Vector2i(130, 72)
-		))
-	else:
-		var off_style := StyleBoxFlat.new()
-		off_style.bg_color = Color(1, 1, 1, 0.10) if UIStyles.is_dark() else Color(UIStyles.PURPLE.r, UIStyles.PURPLE.g, UIStyles.PURPLE.b, 0.15)
-		UIStyles._set_radius(off_style, 36)
-		track.add_theme_stylebox_override("panel", off_style)
-	var target_x := 67.0 if enabled else 9.0
+func _apply_haptics_switch_visual(on_layer: Panel, knob: Panel, enabled: bool, animate: bool) -> void:
+	var target_x := 68.0 if enabled else 6.0
+	var target_alpha := 1.0 if enabled else 0.0
 	if animate:
+		if knob.has_meta("haptics_tween"):
+			var previous := knob.get_meta("haptics_tween") as Tween
+			if previous != null and previous.is_valid():
+				previous.kill()
 		var tween := knob.create_tween()
-		tween.tween_property(knob, "position:x", target_x, 0.18).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		knob.set_meta("haptics_tween", tween)
+		tween.set_parallel(true)
+		tween.tween_method(_set_haptics_knob_progress.bind(knob, knob.position.x, target_x), 0.0, 1.0, 0.25)
+		tween.tween_property(on_layer, "modulate:a", target_alpha, 0.30).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	else:
 		knob.position.x = target_x
+		on_layer.modulate.a = target_alpha
+
+func _set_haptics_knob_progress(progress: float, knob: Panel, from_x: float, to_x: float) -> void:
+	knob.position.x = lerpf(from_x, to_x, _haptics_slide_ease(progress))
+
+func _haptics_slide_ease(progress: float) -> float:
+	var t := clampf(progress, 0.0, 1.0)
+	for _iteration in range(6):
+		var x := _cubic_bezier_axis(t, 0.32, 0.35)
+		var derivative := _cubic_bezier_derivative(t, 0.32, 0.35)
+		if absf(derivative) < 0.0001:
+			break
+		t = clampf(t - (x - progress) / derivative, 0.0, 1.0)
+	return _cubic_bezier_axis(t, 0.72, 1.0)
+
+func _cubic_bezier_axis(t: float, first: float, second: float) -> float:
+	var inverse := 1.0 - t
+	return 3.0 * inverse * inverse * t * first + 3.0 * inverse * t * t * second + t * t * t
+
+func _cubic_bezier_derivative(t: float, first: float, second: float) -> float:
+	var inverse := 1.0 - t
+	return 3.0 * inverse * inverse * first + 6.0 * inverse * t * (second - first) + 3.0 * t * t * (1.0 - second)
+
+func _apply_static_glass_button(button: Button) -> void:
+	var style := UIStyles.glass_panel(67, false)
+	button.add_theme_stylebox_override("normal", style)
+	button.add_theme_stylebox_override("hover", style.duplicate())
+	button.add_theme_stylebox_override("pressed", style.duplicate())
+	button.add_theme_stylebox_override("disabled", style.duplicate())
+	UIStyles.apply_font(button, UIStyles.FONT_SEMIBOLD, int(button.get_theme_font_size("font_size")), UIStyles.TEXT)
+	button.add_theme_color_override("font_hover_color", UIStyles.TEXT)
+	button.add_theme_color_override("font_pressed_color", UIStyles.TEXT)
+	button.add_theme_color_override("font_focus_color", UIStyles.TEXT)
+	button.set_meta("hover_radius", 67)
+	button.mouse_entered.connect(func() -> void: UIStyles._hover_highlight(button, true))
+	button.mouse_exited.connect(func() -> void: UIStyles._hover_highlight(button, false))
+	# 5.6: тумблер (строка вибро) молчал при нажатии — добавляем клик как у других кнопок.
+	button.button_down.connect(func() -> void: AudioManagerScript.play_ui_tap())
 
 # ---------------------------------------------------------------------------
 # Appearance toggle
@@ -218,22 +270,24 @@ func build_theme_toggle(x: float, y: float, w: float) -> void:
 
 func _theme_segment(parent: Node, text: String, value: String, x: float, w: float, h: float) -> void:
 	var active := current_theme == value
+	var tab_size := Vector2(w, h - 26.0)
 	var seg := Button.new()
 	seg.text = text
 	seg.position = Vector2(x, 13.0)
-	seg.size = Vector2(w, h - 26.0)
+	seg.size = tab_size
+	seg.focus_mode = Control.FOCUS_NONE
 	seg.add_theme_font_size_override("font_size", 47)
 	if active:
 		var seg_text_color := UIStyles.ON_ACCENT
 		if UIStyles.is_dark():
-			var style := UIStyles.gradient_style(UIStyles.PRIMARY_TOP, UIStyles.PRIMARY_BOTTOM, 67, Vector2i(int(w), int(h - 26.0)))
+			var style := UIStyles.gradient_style(UIStyles.PRIMARY_TOP, UIStyles.PRIMARY_BOTTOM, 54, Vector2i(tab_size))
 			seg.add_theme_stylebox_override("normal", style)
 			seg.add_theme_stylebox_override("hover", style.duplicate())
 			seg.add_theme_stylebox_override("pressed", style.duplicate())
 		else:
 			var white := StyleBoxFlat.new()
 			white.bg_color = Color.WHITE
-			UIStyles._set_radius(white, 67)
+			UIStyles._set_radius(white, 54)
 			seg.add_theme_stylebox_override("normal", white)
 			seg.add_theme_stylebox_override("hover", white.duplicate())
 			seg.add_theme_stylebox_override("pressed", white.duplicate())
@@ -244,17 +298,18 @@ func _theme_segment(parent: Node, text: String, value: String, x: float, w: floa
 	else:
 		var flat := StyleBoxFlat.new()
 		flat.bg_color = Color(0, 0, 0, 0)
+		UIStyles._set_radius(flat, 54)
 		seg.add_theme_stylebox_override("normal", flat)
 		seg.add_theme_stylebox_override("hover", flat.duplicate())
 		seg.add_theme_stylebox_override("pressed", flat.duplicate())
 		UIStyles.apply_font(seg, UIStyles.FONT_SEMIBOLD, 47, UIStyles.MUTED)
 		seg.add_theme_color_override("font_hover_color", UIStyles.MUTED)
 		seg.add_theme_color_override("font_pressed_color", UIStyles.MUTED)
-	# Exception: the already-active theme gives no hover feedback; only the
-	# inactive segment highlights, so it reads as the tappable option. Radius 67
-	# matches the toggle pill so the highlight takes the selected-pill shape.
-	if not active:
-		UIStyles.add_press_animation(seg, 67)
+		seg.set_meta("hover_radius", 54)
+		seg.mouse_entered.connect(func() -> void: UIStyles._hover_highlight(seg, true))
+		seg.mouse_exited.connect(func() -> void: UIStyles._hover_highlight(seg, false))
+	# 5.6: сегменты темы молчали при нажатии — клик как у других кнопок.
+	seg.button_down.connect(func() -> void: AudioManagerScript.play_ui_tap())
 	seg.pressed.connect(func(): theme_selected.emit(value))
 	parent.add_child(seg)
 
@@ -329,7 +384,7 @@ func build_language_popup() -> void:
 		opt.add_theme_stylebox_override("normal", style)
 		opt.add_theme_stylebox_override("hover", style.duplicate())
 		opt.add_theme_stylebox_override("pressed", style.duplicate())
-		UIStyles.add_press_animation(opt)
+		UIStyles.add_press_animation(opt, 60)
 		opt.pressed.connect(func():
 			language_changed.emit(code)
 		)
@@ -353,25 +408,24 @@ func build_language_popup() -> void:
 	cancel.pressed.connect(func(): hide_language_popup())
 	panel.add_child(cancel)
 
-func _language_row_style(selected: bool) -> StyleBoxFlat:
-	var s := StyleBoxFlat.new()
+func _language_row_style(selected: bool) -> StyleBoxTexture:
+	var bg: Color
+	var border: Color
 	if selected:
 		if UIStyles.is_dark():
-			s.bg_color = Color(0.655, 0.545, 0.980, 0.16)
-			s.border_color = Color(0.769, 0.710, 0.992, 0.40)
+			bg = Color(0.655, 0.545, 0.980, 0.16)
+			border = Color(0.769, 0.710, 0.992, 0.40)
 		else:
-			s.bg_color = Color(0.545, 0.361, 0.965, 0.10)
-			s.border_color = Color(0.357, 0.196, 0.768, 0.30)
+			bg = Color(0.545, 0.361, 0.965, 0.10)
+			border = Color(0.357, 0.196, 0.768, 0.30)
 	else:
 		if UIStyles.is_dark():
-			s.bg_color = Color(1, 1, 1, 0.05)
-			s.border_color = Color(1, 1, 1, 0.10)
+			bg = Color(1, 1, 1, 0.05)
+			border = Color(1, 1, 1, 0.10)
 		else:
-			s.bg_color = Color(0.106, 0.071, 0.2, 0.04)
-			s.border_color = Color(0.106, 0.071, 0.2, 0.08)
-	UIStyles._set_border(s, 3)
-	UIStyles._set_radius(s, 60)
-	return s
+			bg = Color(0.106, 0.071, 0.2, 0.04)
+			border = Color(0.106, 0.071, 0.2, 0.08)
+	return UIStyles.smooth_panel(bg, border, 60, UIStyles.PANEL_BORDER_WIDTH)
 
 func is_language_popup_open() -> bool:
 	return is_instance_valid(language_popup) and language_popup.visible
@@ -427,7 +481,7 @@ func build_reset_popup() -> void:
 	var warn: Texture2D = UIStyles.load_icon(UIStyles.WARNING_CIRCLE_PATH)
 	PopupFactoryScript.badge(panel, pw, Color("#FF9B96"), Color("#E0453F"), warn if warn != null else UIStyles.ICON_INFO, 94.0)
 	PopupFactoryScript.title(panel, pw, Locale.t("settings.reset.title", "Reset Progress"))
-	PopupFactoryScript.body(panel, pw, Locale.t("settings.reset.body", "This will erase your progress, stars, bulbs and unlocked levels. This cannot be undone."), 268.0)
+	PopupFactoryScript.body(panel, pw, Locale.t("settings.reset.body", "This will erase your progress, stars, lumens and unlocked levels."), 268.0)
 
 	var confirm_btn := PopupFactoryScript.primary_button(Locale.t("settings.reset.confirm", "Reset Progress"), pw, 500.0, true)
 	confirm_btn.pressed.connect(func():
@@ -441,10 +495,17 @@ func build_reset_popup() -> void:
 	cancel_btn.pressed.connect(func(): hide_reset_popup())
 	panel.add_child(cancel_btn)
 
-func show_reset_popup() -> void:
+func is_reset_popup_open() -> bool:
+	return is_instance_valid(reset_popup) and reset_popup.visible
+
+func show_reset_popup(immediate: bool = false) -> void:
 	if reset_popup != null and reset_popup_panel != null:
-		AudioManagerScript.play_reset_progress_haptic()
-		PopupFactoryScript.show_sheet(reset_popup, reset_popup_panel, PopupFactoryScript.find_scrim(reset_popup))
+		var overlay := PopupFactoryScript.find_scrim(reset_popup)
+		if immediate:
+			PopupFactoryScript.show_sheet_immediate(reset_popup, reset_popup_panel, overlay)
+		else:
+			AudioManagerScript.play_reset_progress_haptic()
+			PopupFactoryScript.show_sheet(reset_popup, reset_popup_panel, overlay)
 
 func hide_reset_popup(after_hidden: Callable = Callable()) -> void:
 	if reset_popup != null and reset_popup_panel != null:

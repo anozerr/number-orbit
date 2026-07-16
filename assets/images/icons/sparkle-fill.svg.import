@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://crytuyx2oikl1"
-path="res://.godot/imported/music-notes.svg-d46e267aed7773296550cb12ca4c9673.ctex"
+uid="uid://uio76056esir"
+path="res://.godot/imported/sparkle-fill.svg-6243daec5703cb5ac4350350f1709bbb.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/images/icons/music-notes.svg"
-dest_files=["res://.godot/imported/music-notes.svg-d46e267aed7773296550cb12ca4c9673.ctex"]
+source_file="res://assets/images/icons/sparkle-fill.svg"
+dest_files=["res://.godot/imported/sparkle-fill.svg-6243daec5703cb5ac4350350f1709bbb.ctex"]
 
 [params]
 

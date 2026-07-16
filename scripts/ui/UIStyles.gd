@@ -49,6 +49,16 @@ const CARET_LEFT_PATH := "res://assets/images/icons/caret-left.svg"
 const CARET_RIGHT_PATH := "res://assets/images/icons/caret-right.svg"
 const WARNING_CIRCLE_PATH := "res://assets/images/icons/warning-circle.svg"
 const GLOBE_PATH := "res://assets/images/icons/globe.svg"
+const SPARKLE_PATH := "res://assets/images/icons/sparkle-fill.svg"
+
+# Shared attention-glow motion. Semantic colors stay owned by each feature, but
+# every persistent highlight breathes through the same 18→28px halo and rhythm.
+# The range sits between the former tutorial (24px) and Hint (36px) treatments.
+const ATTENTION_PULSE_HALF_PERIOD := 1.10
+const ATTENTION_GLOW_MIN_EXTENT := 18.0
+const ATTENTION_GLOW_MAX_EXTENT := 28.0
+const ATTENTION_GLOW_MIN_ALPHA := 0.42
+const ATTENTION_GLOW_MAX_ALPHA := 1.0
 
 # --- Fonts (built once in _static_init) ---
 static var FONT_REGULAR: Font
@@ -87,10 +97,18 @@ static var TARGET_TEXT: Color
 static var RING: Color
 static var ORBIT_RING: Color
 static var ON_ACCENT: Color
+static var OPERATION_COLORS: Dictionary
+static var COACH_DIM: Color
+static var COACH_PANEL_BG: Color
+static var COACH_PANEL_BORDER: Color
+static var COACH_PANEL_MUTED: Color
+static var COACH_DOT_INACTIVE: Color
 
 static var _theme_name: String = "light"
 static var _rounded_gradient_cache: Dictionary = {}
 static var _circle_gradient_cache: Dictionary = {}
+static var _smooth_panel_cache: Dictionary = {}
+static var _circle_panel_cache: Dictionary = {}
 static var _icon_cache: Dictionary = {}
 
 static func _static_init() -> void:
@@ -158,6 +176,12 @@ static func set_theme(name: String) -> void:
 	RING = t["ring"]
 	ORBIT_RING = t["orbit_ring"]
 	ON_ACCENT = t["on_accent"]
+	OPERATION_COLORS = t["operations"]
+	COACH_DIM = t["coach_dim"]
+	COACH_PANEL_BG = t["coach_panel_bg"]
+	COACH_PANEL_BORDER = t["coach_panel_border"]
+	COACH_PANEL_MUTED = t["coach_panel_muted"]
+	COACH_DOT_INACTIVE = t["coach_dot_inactive"]
 
 static func is_dark() -> bool:
 	return _theme_name == "dark"
@@ -168,7 +192,7 @@ static func _light_palette() -> Dictionary:
 		"blob_a": Color("#E4D9FF"),
 		"blob_b": Color("#D8C6FF"),
 		"text": Color("#1B1233"),
-		"muted": Color("#8983A0"),
+		"muted": Color("#726C88"),
 		"statusbar_text": Color("#5A5175"),
 		"glass_bg": Color(1, 1, 1, 0.82),
 		"glass_border": Color(0.106, 0.071, 0.2, 0.10),
@@ -182,7 +206,7 @@ static func _light_palette() -> Dictionary:
 		"primary_bottom": Color("#5B32C4"),
 		"gold": Color("#F5A623"),
 		"star_empty": Color("#D8D2E0"),
-		"disabled": Color("#A8ADB8"),
+		"disabled": Color("#71757F"),
 		"danger_text": Color("#C82424"),
 		"danger_top": Color("#FF9B96"),
 		"danger_bottom": Color("#E0453F"),
@@ -192,6 +216,17 @@ static func _light_palette() -> Dictionary:
 		"ring": Color("#FBF9FF"),
 		"orbit_ring": Color(0.545, 0.361, 0.965, 0.25),
 		"on_accent": Color.WHITE,
+		"coach_dim": Color(0.078, 0.055, 0.141, 0.46),
+		"coach_panel_bg": Color("#FFFFFF"),
+		"coach_panel_border": Color(0.106, 0.071, 0.2, 0.09),
+		"coach_panel_muted": Color("#8983A0"),
+		"coach_dot_inactive": Color(0.106, 0.071, 0.2, 0.10),
+		"operations": {
+			"add": _operation_swatch("#248E4D", "#155E34", "#E4F5E9", 0.16),
+			"subtract": _operation_swatch("#DC3B3B", "#8E1B1B", "#FBE1E0", 0.16),
+			"multiply": _operation_swatch("#1478D4", "#184F94", "#E4EFFB", 0.16),
+			"divide": _operation_swatch("#E27A20", "#8A4408", "#FBEAD7", 0.16),
+		},
 	}
 
 static func _dark_palette() -> Dictionary:
@@ -214,7 +249,7 @@ static func _dark_palette() -> Dictionary:
 		"primary_bottom": Color("#7C3AED"),
 		"gold": Color("#FBBF24"),
 		"star_empty": Color("#4A4460"),
-		"disabled": Color("#5A5470"),
+		"disabled": Color("#837C99"),
 		"danger_text": Color("#F87171"),
 		"danger_top": Color("#F87171"),
 		"danger_bottom": Color("#B91C1C"),
@@ -224,74 +259,63 @@ static func _dark_palette() -> Dictionary:
 		"ring": Color(0.078, 0.055, 0.149, 0.45),
 		"orbit_ring": Color(0.655, 0.545, 0.980, 0.28),
 		"on_accent": Color.WHITE,
+		"coach_dim": Color(0.031, 0.020, 0.071, 0.58),
+		"coach_panel_bg": Color("#1E1837"),
+		"coach_panel_border": Color(1, 1, 1, 0.16),
+		"coach_panel_muted": Color("#A79CC7"),
+		"coach_dot_inactive": Color(1, 1, 1, 0.14),
+		"operations": {
+			"add": _operation_swatch("#4CD477", "#74E39A", "#173326", 0.14),
+			"subtract": _operation_swatch("#FF6060", "#FF9D9D", "#3A1A1E", 0.14),
+			"multiply": _operation_swatch("#4C9DFF", "#80B9FF", "#182740", 0.14),
+			"divide": _operation_swatch("#FF9F45", "#FFC183", "#35251A", 0.16),
+		},
 	}
 
 # ============================================================================
 # Operator semantics (theme-aware)
 # ============================================================================
 
+static func _operation_swatch(border_hex: String, text_hex: String, plate_hex: String, bg_alpha: float) -> Dictionary:
+	var border := Color(border_hex)
+	var background := border
+	background.a = bg_alpha
+	return {
+		"bg": background,
+		"border": border,
+		"text": Color(text_hex),
+		"plate": Color(plate_hex),
+	}
+
+static func _operation_color(op: String, token: String, fallback: Color) -> Color:
+	var swatch: Dictionary = OPERATION_COLORS.get(op, {}) as Dictionary
+	var color: Color = swatch.get(token, fallback)
+	return color
+
 static func operation_bg(op: String) -> Color:
-	if is_dark():
-		match op:
-			"add": return Color(0.372, 0.831, 0.537, 0.14)
-			"subtract": return Color(0.992, 0.729, 0.454, 0.14)
-			"multiply": return Color(0.972, 0.443, 0.443, 0.14)
-			"divide": return Color(0.376, 0.647, 0.980, 0.14)
-		return Color(1, 1, 1, 0.05)
-	match op:
-		"add": return Color(0.345, 0.662, 0.309, 0.16)
-		"subtract": return Color(0.960, 0.662, 0.239, 0.16)
-		"multiply": return Color(0.941, 0.392, 0.372, 0.16)
-		"divide": return Color(0.301, 0.615, 0.878, 0.16)
-	return Color(0, 0, 0, 0.05)
+	return _operation_color(op, "bg", Color(1, 1, 1, 0.05) if is_dark() else Color(0, 0, 0, 0.05))
 
 static func operation_border(op: String) -> Color:
-	if is_dark():
-		match op:
-			"add": return Color("#5FD489")
-			"subtract": return Color("#FDBA74")
-			"multiply": return Color("#F87171")
-			"divide": return Color("#60A5FA")
-		return Color(1, 1, 1, 0.18)
-	match op:
-		"add": return Color("#58A94F")
-		"subtract": return Color("#F5A93D")
-		"multiply": return Color("#F0645F")
-		"divide": return Color("#4D9DE0")
-	return Color("#B8B2C4")
+	return _operation_color(op, "border", Color(1, 1, 1, 0.18) if is_dark() else Color("#B8B2C4"))
 
 static func operation_text(op: String) -> Color:
-	if is_dark():
-		match op:
-			"add": return Color("#8CE3A9")
-			"subtract": return Color("#FDBA74")
-			"multiply": return Color("#F87171")
-			"divide": return Color("#60A5FA")
-		return MUTED
-	match op:
-		"add": return Color("#2E6E28")
-		"subtract": return Color("#8A5A12")
-		"multiply": return Color("#B32B26")
-		"divide": return Color("#1B4F7A")
-	return Color("#8A8494")
+	return _operation_color(op, "text", MUTED if is_dark() else Color("#8A8494"))
 
 # Fill color of an operator's chip/plate (shared by the legend chips and the
 # orbit satellites so a satellite matches its operator's plate).
 static func operation_plate(op: String) -> Color:
-	if is_dark():
-		if op == "unavailable":
-			return BG.lerp(Color.WHITE, 0.07)
-		return BG.lerp(operation_border(op), 0.20)
 	if op == "unavailable":
-		return Color("#ECEBF1")
-	return Color.WHITE.lerp(operation_border(op), 0.17)
+		return BG.lerp(Color.WHITE, 0.07) if is_dark() else Color("#ECEBF1")
+	return _operation_color(op, "plate", BG.lerp(Color.WHITE, 0.07) if is_dark() else Color("#ECEBF1"))
 
 # Difficulty accent color for level-select labels/chips.
 static func difficulty_color(difficulty: String) -> Color:
 	match difficulty:
 		"Easy": return operation_border("add")
 		"Medium": return GOLD
-		"Hard": return operation_border("multiply")
+		"Hard": return operation_border("subtract")
+		"Extreme": return Color("#A855F7")
+		"Impossible": return Color("#EC4899")
 		"Expert", "Master": return PURPLE
 	return PURPLE
 
@@ -303,50 +327,168 @@ static func difficulty_color(difficulty: String) -> Color:
 # canvas). The canvas width is fixed under stretch "expand", so this stays
 # device-independent.
 const CORNER := 67
+const SMOOTH_CORNER_DETAIL := 96
+const SMOOTH_ANTIALIASING_SIZE := 1.25
+const SMOOTH_PANEL_SUPERSAMPLE := 1
+const PANEL_BORDER_WIDTH := 3
 
-# Primary glass surface used across the redesign.
-static func glass_panel(radius: int = CORNER, heavy: bool = false) -> StyleBoxFlat:
+# Primary glass surface used across the redesign. Thin rounded borders use an
+# analytic SDF nine-patch instead of StyleBoxFlat: this avoids the faceted
+# double edge StyleBoxFlat produces after fractional canvas_items scaling.
+static func glass_panel(radius: int = CORNER, heavy: bool = false) -> StyleBoxTexture:
+	return smooth_panel(
+		GLASS_POPUP_BG if heavy else GLASS_BG,
+		GLASS_POPUP_BORDER if heavy else GLASS_BORDER,
+		radius,
+		PANEL_BORDER_WIDTH
+	)
+
+# Tutorial coach card and its non-step P.S. note share one exact glass surface.
+static func coach_caption_panel(radius: int = 96) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = GLASS_POPUP_BG if heavy else GLASS_BG
-	style.border_color = GLASS_POPUP_BORDER if heavy else GLASS_BORDER
+	style.bg_color = COACH_PANEL_BG
+	style.border_color = COACH_PANEL_BORDER
 	_set_border(style, 3)
 	_set_radius(style, radius)
+	style.shadow_color = Color(0.078, 0.039, 0.157, 0.28)
+	style.shadow_size = 120
+	style.shadow_offset = Vector2(0, 60)
 	return style
 
-static func locked_panel(radius: int = CORNER) -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = LOCKED_BG
-	style.border_color = LOCKED_BORDER
-	_set_border(style, 3)
-	_set_radius(style, radius)
-	return style
+static func locked_panel(radius: int = CORNER) -> StyleBoxTexture:
+	return smooth_panel(LOCKED_BG, LOCKED_BORDER, radius, PANEL_BORDER_WIDTH)
 
 # Generic filled card (used for colored bubbles / chips with explicit colors).
-static func card(bg: Color = Color.WHITE, border: Color = Color.TRANSPARENT, radius: int = CORNER) -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = bg
-	style.border_color = border if border.a > 0.0 else GLASS_BORDER
-	_set_border(style, 3)
-	_set_radius(style, radius)
-	return style
+static func card(bg: Color = Color.WHITE, border: Color = Color.TRANSPARENT, radius: int = CORNER) -> StyleBoxTexture:
+	return smooth_panel(bg, border if border.a > 0.0 else GLASS_BORDER, radius, PANEL_BORDER_WIDTH)
 
 # Back-compat alias — old call sites used soft_panel(); now maps to glass.
-static func soft_panel(_bg: Color = Color.WHITE, radius: int = 34) -> StyleBoxFlat:
+static func soft_panel(_bg: Color = Color.WHITE, radius: int = 34) -> StyleBoxTexture:
 	return glass_panel(radius, false)
 
 # Appearance segmented-toggle track (mockup: faint purple in light, faint white
 # in dark, 3px border, full corner).
-static func appearance_toggle_bg() -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
+static func appearance_toggle_bg() -> StyleBoxTexture:
+	var bg: Color
+	var border: Color
 	if is_dark():
-		style.bg_color = Color(1, 1, 1, 0.05)
-		style.border_color = Color(1, 1, 1, 0.10)
+		bg = Color(1, 1, 1, 0.05)
+		border = Color(1, 1, 1, 0.10)
 	else:
-		style.bg_color = Color(0.545, 0.361, 0.965, 0.08)
-		style.border_color = Color(0.545, 0.361, 0.965, 0.16)
-	_set_border(style, 3)
-	_set_radius(style, CORNER)
+		bg = Color(0.545, 0.361, 0.965, 0.08)
+		border = Color(0.545, 0.361, 0.965, 0.16)
+	return smooth_panel(bg, border, CORNER, PANEL_BORDER_WIDTH)
+
+# Uniform rounded fill + optional border, baked as an analytic SDF nine-patch.
+# The small texture is stretched only through its straight center strips;
+# corners retain their exact antialiased pixel coverage.
+static func smooth_panel(bg: Color, border: Color, radius: int, border_width: int = PANEL_BORDER_WIDTH) -> StyleBoxTexture:
+	var safe_radius := maxi(radius, 0)
+	var safe_border := maxi(border_width, 0)
+	var key := "%s:%s:%d:%d" % [bg.to_html(true), border.to_html(true), safe_radius, safe_border]
+	var texture: ImageTexture
+	if _smooth_panel_cache.has(key):
+		texture = _smooth_panel_cache[key] as ImageTexture
+	else:
+		texture = _build_smooth_panel_texture(bg, border, safe_radius, safe_border)
+		_smooth_panel_cache[key] = texture
+	var margin := safe_radius + safe_border
+	var style := StyleBoxTexture.new()
+	style.texture = texture
+	style.texture_margin_left = margin
+	style.texture_margin_right = margin
+	style.texture_margin_top = margin
+	style.texture_margin_bottom = margin
+	style.content_margin_left = 0
+	style.content_margin_right = 0
+	style.content_margin_top = 0
+	style.content_margin_bottom = 0
 	return style
+
+static func _build_smooth_panel_texture(bg: Color, border: Color, radius: int, border_width: int) -> ImageTexture:
+	var margin := radius + border_width
+	var patch_size := maxi(2, margin * 2 + 2)
+	var scale := SMOOTH_PANEL_SUPERSAMPLE
+	var high_size := patch_size * scale
+	var image := Image.create(high_size, high_size, false, Image.FORMAT_RGBA8)
+	var half := Vector2(high_size, high_size) * 0.5
+	var edge_rgb := border if border.a > 0.0 else bg
+	for y in range(high_size):
+		for x in range(high_size):
+			var p := Vector2(float(x) + 0.5, float(y) + 0.5) - half
+			var outer_distance := rounded_rect_sdf(p, half, float(radius * scale))
+			var outer_alpha := 1.0 - smoothstep(-1.0, 1.0, outer_distance)
+			if outer_alpha <= 0.0:
+				image.set_pixel(x, y, Color(edge_rgb.r, edge_rgb.g, edge_rgb.b, 0.0))
+				continue
+			var inner_alpha := 1.0
+			if border_width > 0 and border.a > 0.0:
+				var inset := float(border_width * scale)
+				var inner_half := half - Vector2(inset, inset)
+				var inner_radius := float(maxi(radius - border_width, 0) * scale)
+				var inner_distance := rounded_rect_sdf(p, inner_half, inner_radius)
+				inner_alpha = 1.0 - smoothstep(-1.0, 1.0, inner_distance)
+			var color := border.lerp(bg, inner_alpha) if border_width > 0 and border.a > 0.0 else bg
+			color.a *= outer_alpha
+			image.set_pixel(x, y, color)
+	if scale > 1:
+		image.resize(patch_size, patch_size, Image.INTERPOLATE_LANCZOS)
+	image.generate_mipmaps()
+	return ImageTexture.create_from_image(image)
+
+# Circular glass surface baked as ONE full-size SDF texture (not a nine-patch).
+# A nine-patch whose opposing corner margins sum to more than the control size —
+# which is the case for any icon button, where radius ≈ half the diameter —
+# overlaps its corner regions in the middle and leaves faint antialiased seams at
+# the four cardinal points (12/3/6/9 o'clock). Baking the whole disc removes the
+# center strip entirely, so no seam can form. The edge stays smooth under the
+# canvas's fractional scaling, exactly like circle_gradient_texture.
+static func circle_panel(diameter: int, bg: Color, border: Color, border_width: int = PANEL_BORDER_WIDTH) -> StyleBoxTexture:
+	var safe_d := maxi(diameter, 1)
+	var safe_border := maxi(border_width, 0)
+	var key := "%d:%s:%s:%d" % [safe_d, bg.to_html(true), border.to_html(true), safe_border]
+	var texture: ImageTexture
+	if _circle_panel_cache.has(key):
+		texture = _circle_panel_cache[key] as ImageTexture
+	else:
+		texture = _build_circle_texture(safe_d, bg, border, safe_border)
+		_circle_panel_cache[key] = texture
+	var style := StyleBoxTexture.new()
+	style.texture = texture
+	# Zero texture margins → the texture is drawn as a single stretched quad with
+	# no nine-slice, so there is no center strip and no seam.
+	style.texture_margin_left = 0
+	style.texture_margin_right = 0
+	style.texture_margin_top = 0
+	style.texture_margin_bottom = 0
+	style.content_margin_left = 0
+	style.content_margin_right = 0
+	style.content_margin_top = 0
+	style.content_margin_bottom = 0
+	return style
+
+static func _build_circle_texture(diameter: int, bg: Color, border: Color, border_width: int) -> ImageTexture:
+	var image := Image.create(diameter, diameter, false, Image.FORMAT_RGBA8)
+	var center := Vector2(diameter, diameter) * 0.5
+	var outer_r := float(diameter) * 0.5
+	var inner_r := outer_r - float(border_width)
+	var has_border := border_width > 0 and border.a > 0.0
+	# Fully-transparent pixels keep the rim's RGB (alpha 0) so the linear filter /
+	# mipmaps never bleed black into the antialiased edge.
+	var edge_rgb := border if has_border else bg
+	for y in range(diameter):
+		for x in range(diameter):
+			var d := (Vector2(float(x) + 0.5, float(y) + 0.5) - center).length()
+			var outer_alpha := sdf_alpha(d - outer_r)
+			if outer_alpha <= 0.0:
+				image.set_pixel(x, y, Color(edge_rgb.r, edge_rgb.g, edge_rgb.b, 0.0))
+				continue
+			var inner_alpha := sdf_alpha(d - inner_r) if has_border else 1.0
+			var color := border.lerp(bg, inner_alpha) if has_border else bg
+			color.a *= outer_alpha
+			image.set_pixel(x, y, color)
+	image.generate_mipmaps()
+	return ImageTexture.create_from_image(image)
 
 static func _set_border(style: StyleBoxFlat, width: int) -> void:
 	style.border_width_left = width
@@ -359,9 +501,9 @@ static func _set_radius(style: StyleBoxFlat, radius: int) -> void:
 	style.corner_radius_top_right = radius
 	style.corner_radius_bottom_left = radius
 	style.corner_radius_bottom_right = radius
-	style.corner_detail = 48
+	style.corner_detail = SMOOTH_CORNER_DETAIL
 	style.anti_aliasing = true
-	style.anti_aliasing_size = 1.0
+	style.anti_aliasing_size = SMOOTH_ANTIALIASING_SIZE
 
 static func apply_font(control: Control, font: Font = null, size: int = 28, color: Color = Color.TRANSPARENT) -> void:
 	control.add_theme_font_override("font", font if font != null else FONT_SEMIBOLD)
@@ -383,7 +525,7 @@ static func menu_button(button: Button, radius: int = CORNER) -> void:
 	button.add_theme_color_override("font_hover_color", TEXT)
 	button.add_theme_color_override("font_pressed_color", TEXT)
 	button.add_theme_color_override("font_focus_color", TEXT)
-	add_press_animation(button)
+	add_press_animation(button, radius)
 
 static func primary_button(button: Button, radius: int = CORNER) -> void:
 	_gradient_button(button, PRIMARY_TOP, PRIMARY_BOTTOM, radius)
@@ -453,6 +595,7 @@ static func rounded_gradient_texture(top: Color, bottom: Color, radius: int, tex
 				var color := top.lerp(bottom, t)
 				color.a *= alpha
 				image.set_pixel(x, y, color)
+	image.generate_mipmaps()
 	var texture := ImageTexture.create_from_image(image)
 	_rounded_gradient_cache[key] = texture
 	return texture
@@ -476,6 +619,7 @@ static func circle_gradient_texture(diameter: int, top: Color, bottom: Color) ->
 				var color := top.lerp(bottom, t)
 				color.a *= alpha
 				image.set_pixel(x, y, color)
+	image.generate_mipmaps()
 	var texture := ImageTexture.create_from_image(image)
 	_circle_gradient_cache[key] = texture
 	return texture
@@ -502,6 +646,61 @@ static func load_icon(path: String) -> Texture2D:
 		_icon_cache[path] = tex
 	return _icon_cache[path] as Texture2D
 
+static func sparkle_mark(parent: Node, position: Vector2, size: Vector2, color: Color = Color.WHITE) -> Control:
+	var tex := load_icon(SPARKLE_PATH)
+	if tex != null:
+		return icon(tex, parent, position, size, color)
+	var icon := Control.new()
+	icon.position = position
+	icon.size = size
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(icon)
+	_draw_phosphor_sparkle(icon, size, color)
+	return icon
+
+static func recolor_sparkle_mark(icon: Control, color: Color) -> void:
+	if not is_instance_valid(icon):
+		return
+	if icon is CanvasItem:
+		(icon as CanvasItem).modulate = color
+	for child in icon.get_children():
+		if child is CanvasItem:
+			(child as CanvasItem).modulate = color
+
+static func _draw_phosphor_sparkle(parent: Control, size: Vector2, color: Color) -> void:
+	var main := Polygon2D.new()
+	main.color = Color.WHITE
+	main.modulate = color
+	var raw := [
+		Vector2(112, 54),
+		Vector2(137, 120),
+		Vector2(203, 144),
+		Vector2(137, 168),
+		Vector2(112, 234),
+		Vector2(87, 168),
+		Vector2(21, 144),
+		Vector2(87, 120),
+	]
+	var points := PackedVector2Array()
+	for point in raw:
+		points.append(Vector2(point.x / 256.0 * size.x, point.y / 256.0 * size.y))
+	main.polygon = points
+	parent.add_child(main)
+	_add_sparkle_cross(parent, Vector2(size.x * 176.0 / 256.0, size.y * 68.0 / 256.0), size.x * 40.0 / 256.0, maxf(2.0, size.x * 0.10), color)
+	_add_sparkle_cross(parent, Vector2(size.x * 204.0 / 256.0, size.y * 112.0 / 256.0), size.x * 32.0 / 256.0, maxf(2.0, size.x * 0.09), color)
+
+static func _add_sparkle_cross(parent: Control, center: Vector2, length: float, width: float, color: Color) -> void:
+	for axis in [Vector2.RIGHT, Vector2.DOWN]:
+		var line := Line2D.new()
+		line.width = width
+		line.begin_cap_mode = Line2D.LINE_CAP_ROUND
+		line.end_cap_mode = Line2D.LINE_CAP_ROUND
+		line.default_color = Color.WHITE
+		line.modulate = color
+		line.add_point(center - axis * length * 0.5)
+		line.add_point(center + axis * length * 0.5)
+		parent.add_child(line)
+
 # Icons ship as white-fill monochrome SVGs, so a plain modulate multiply can
 # tint them to any theme color (including dynamic recolors via .modulate).
 static func icon(texture: Texture2D, parent: Node, position: Vector2, size: Vector2, color: Color = Color.TRANSPARENT) -> TextureRect:
@@ -514,31 +713,27 @@ static func icon(texture: Texture2D, parent: Node, position: Vector2, size: Vect
 	rect.custom_minimum_size = Vector2.ZERO
 	rect.position = position
 	rect.size = size
-	rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	rect.modulate = color if color != Color.TRANSPARENT else TEXT
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(rect)
 	return rect
 
-# Circular glass icon button (header back/settings pattern). Uses a borderless
-# stylebox: a 1px border at corner_radius==radius produces a visible seam.
+# Circular glass icon button (header back/settings pattern). It uses the same
+# analytic SDF border as the larger glass panels.
 static func circle_button(parent: Node, position: Vector2, diameter: float = 127.0) -> Button:
 	var button := Button.new()
 	button.position = position
 	button.size = Vector2(diameter, diameter)
-	# radius = diameter/2 collapses the stylebox center strip and leaves a
-	# vertical seam; -2 keeps a tiny center rect while still reading as a circle.
-	var radius := int(diameter * 0.5) - 2
-	var normal := StyleBoxFlat.new()
-	normal.bg_color = GLASS_BG
-	_set_radius(normal, radius)
-	normal.border_color = GLASS_BORDER
-	_set_border(normal, 3)
+	# A full-disc bake (not a nine-patch) — the corner margins of a nine-patch
+	# whose radius is half the size overlap and leave seams at the cardinal points.
+	var normal := circle_panel(int(round(diameter)), GLASS_BG, GLASS_BORDER, PANEL_BORDER_WIDTH)
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", normal.duplicate())
 	button.add_theme_stylebox_override("pressed", normal.duplicate())
 	button.add_theme_stylebox_override("disabled", normal.duplicate())
-	add_press_animation(button)
+	# Hover overlay radius = true half-diameter so the tint stays a perfect circle.
+	add_press_animation(button, int(diameter * 0.5))
 	parent.add_child(button)
 	return button
 
@@ -558,18 +753,19 @@ static func soft_button(button: Button, radius: int = CORNER) -> void:
 	apply_font(button, FONT_BOLD, int(button.get_theme_font_size("font_size")), text_color)
 	button.add_theme_color_override("font_hover_color", text_color)
 	button.add_theme_color_override("font_pressed_color", text_color)
-	add_press_animation(button)
+	add_press_animation(button, radius)
 
 # Soft (tinted) danger button — pale red fill + red text, matching the Reset
 # Progress pill in the mockup (not the solid gradient used for confirm dialogs).
 static func danger_soft_button(button: Button, radius: int = CORNER) -> void:
-	var normal := StyleBoxFlat.new()
 	# Mockup: pale coral fill + coral border. Text stays crimson.
 	var tint := DANGER_TEXT if is_dark() else Color(0.941, 0.392, 0.372)  # coral #F0645F
-	normal.bg_color = Color(tint.r, tint.g, tint.b, 0.14)
-	normal.border_color = Color(tint.r, tint.g, tint.b, 0.30)
-	_set_border(normal, 3)
-	_set_radius(normal, radius)
+	var normal := smooth_panel(
+		Color(tint.r, tint.g, tint.b, 0.14),
+		Color(tint.r, tint.g, tint.b, 0.30),
+		radius,
+		PANEL_BORDER_WIDTH
+	)
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", normal.duplicate())
 	button.add_theme_stylebox_override("pressed", normal.duplicate())
@@ -577,7 +773,7 @@ static func danger_soft_button(button: Button, radius: int = CORNER) -> void:
 	apply_font(button, FONT_BOLD, int(button.get_theme_font_size("font_size")), DANGER_TEXT)
 	button.add_theme_color_override("font_hover_color", DANGER_TEXT)
 	button.add_theme_color_override("font_pressed_color", DANGER_TEXT)
-	add_press_animation(button)
+	add_press_animation(button, radius)
 
 static func back_button(parent: Node, position: Vector2 = Vector2(67, 74)) -> Button:
 	var button := circle_button(parent, position, 127.0)
@@ -590,10 +786,25 @@ static func back_button(parent: Node, position: Vector2 = Vector2(67, 74)) -> Bu
 static func pop_scale(control: Control, peak: float, out_duration: float = 0.10, in_duration: float = 0.14) -> void:
 	if control == null:
 		return
+	if control.has_meta("pop_scale_tween"):
+		var previous := control.get_meta("pop_scale_tween") as Tween
+		if previous != null and previous.is_valid():
+			previous.kill()
 	control.pivot_offset = control.size * 0.5
 	var tween := control.create_tween()
+	control.set_meta("pop_scale_tween", tween)
 	tween.tween_property(control, "scale", Vector2(peak, peak), out_duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.tween_property(control, "scale", Vector2.ONE, in_duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.finished.connect(func() -> void:
+		if is_instance_valid(control):
+			control.remove_meta("pop_scale_tween")
+	)
+
+static func attention_glow_extent(level: float) -> float:
+	return lerpf(ATTENTION_GLOW_MIN_EXTENT, ATTENTION_GLOW_MAX_EXTENT, clampf(level, 0.0, 1.0))
+
+static func attention_glow_alpha(level: float) -> float:
+	return lerpf(ATTENTION_GLOW_MIN_ALPHA, ATTENTION_GLOW_MAX_ALPHA, clampf(level, 0.0, 1.0))
 
 # Hover overlay opacity at full hover. Dark theme lightens (white overlay), light
 # theme darkens (black overlay) — a soft tint that reads on either surface. Kept

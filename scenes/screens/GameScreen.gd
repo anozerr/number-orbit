@@ -12,11 +12,48 @@ signal restart_pressed
 signal orbit_pressed(value: int, op: String, item_id: String)
 signal hint_requested
 signal hint_ad_requested
+signal coach_header_mode_changed(active: bool)
+
+class OrbitButtonOutline:
+	extends Control
+
+	var outline_color: Color = Color.WHITE
+	var outline_width := 4.0
+
+	func _draw() -> void:
+		var radius := minf(size.x, size.y) * 0.5 - outline_width * 0.5
+		if radius <= 0.0:
+			return
+		draw_arc(size * 0.5, radius, 0.0, TAU, 192, outline_color, outline_width, true)
+
+class LumensBadgeOutline:
+	extends Control
+
+	var outline_color: Color = Color.WHITE
+	var outline_width := 3.0
+
+	func _draw() -> void:
+		if size.x <= 0.0 or size.y <= 0.0:
+			return
+		var inset := outline_width * 0.5
+		var radius := maxf(0.0, size.y * 0.5 - inset)
+		var left_center := Vector2(inset + radius, size.y * 0.5)
+		var right_center := Vector2(size.x - inset - radius, size.y * 0.5)
+		var points := PackedVector2Array([Vector2(left_center.x, inset), Vector2(right_center.x, inset)])
+		for step in range(1, 49):
+			var angle := -PI * 0.5 + PI * float(step) / 48.0
+			points.append(right_center + Vector2(cos(angle), sin(angle)) * radius)
+		points.append(Vector2(left_center.x, size.y - inset))
+		for step in range(1, 49):
+			var angle := PI * 0.5 + PI * float(step) / 48.0
+			points.append(left_center + Vector2(cos(angle), sin(angle)) * radius)
+		points.append(points[0])
+		draw_polyline(points, outline_color, outline_width, true)
 
 var screen_center := Vector2(603, 1240)
 const ORBIT_RADIUS := 388
-# Actual orbit radius, recomputed each layout to fill the available band while
-# staying within the fixed 1206-wide canvas (set in _apply_layout).
+# The iPhone 17 Pro composition defines the maximum visual radius. Wider/taller
+# canvases add breathing room around the game instead of enlarging the orbit.
 var orbit_radius: float = float(ORBIT_RADIUS)
 const EDGE_MARGIN := 67.0
 const TOP_BUTTON_Y := 74.0
@@ -30,8 +67,17 @@ const INFO_TEXT_LEFT := 150.0
 const INFO_CLIP_RIGHT_PAD := 44.0
 const INFO_REST_X := 48.0
 const INFO_FADE_PX := 44.0
+const INFO_TEXT_SAFE_INSET := 16.0
+const INFO_TEMP_HOLD_SECONDS := 3.0
+const HINT_REPEAT_GLOW_EXTENT := 42.0
+const HINT_REPEAT_GLOW_ALPHA_FACTOR := 1.45
+const HINT_REVEAL_RESET := 0.14
+const HINT_REVEAL_GROW := 0.48
+const HINT_REVEAL_SETTLE := 0.42
 const ACTION_BUTTON_Y := 1518.0
 const ACTION_BUTTON_HEIGHT := 174.0
+const TUTORIAL_CAUTION_WIDTH := 1072.0
+const TUTORIAL_CAUTION_HEIGHT := 174.0
 const LEGEND_Y := 1626.0
 const CENTER_CIRCLE_DIAMETER := 335
 const CENTER_CIRCLE_RADIUS := CENTER_CIRCLE_DIAMETER * 0.5
@@ -39,9 +85,11 @@ const CENTER_CIRCLE_RADIUS := CENTER_CIRCLE_DIAMETER * 0.5
 var center_label: Label
 var center_panel: Control
 var center_circle: TextureRect
+var center_flash: Panel
+var center_flash_tween: Tween
 var level_label: Label
-var level_bg: Panel
-var moves_bg: Panel
+var level_bg: Control
+var moves_bg: Control
 var target_panel: Control
 var target_circle: TextureRect
 var level_hover: Panel
@@ -50,9 +98,17 @@ var goal_label: Label
 var info_panel: Panel
 var info_icon: TextureRect
 var tutorial_help_label: Label
-var _status_notch_shader: Shader
 var moves_count_label: Label
-var bulbs_button: Button
+var hint_button: Button
+var hint_dim: Panel
+var hint_label: Label
+var tutorial_caution_panel: Button
+var tutorial_caution_label: Label
+var tutorial_caution_tween: Tween
+var lumens_badge: Panel
+var lumens_badge_border: Control
+var lumens_badge_icon: Control
+var lumens_badge_label: Label
 var restart_button: Button
 var back_button: Button
 var settings_button: Button
@@ -66,26 +122,34 @@ var orbit_spin_tween: Tween
 var last_center_number: int = -999999
 var level_failed: bool = false
 var current_number_value: int = 0
-var current_hint_points: int = 0
+var current_lumens: int = 0
 var current_moves: int = 0
+var current_hint_cost: int = 0
 var current_target_value: int = 0
-var current_thresholds: Array = []
+var current_star_mode := ""
 var current_star_bands: Array = []
 var current_is_tutorial := false
+var current_is_placeholder := false
 var previous_failed_state := false
+var _hint_dimmed := false
+var _hint_dim_progress := 0.0
 var tutorial_help_text_current := ""
 var coach_overlay: Control
 var info_line_error_state: Variant = null
-# --- Info-line marquee (single scrolling line: enters from the right, rests 3s,
-# exits left into the edge fade, then reverts to the default caption). ---
+# --- Info-line captions: every message rests centered in the readable lane.
+# Temporary captions fade in, stay briefly, then fade back to the default. ---
 var info_clip: Control
 var info_fade_material: ShaderMaterial
 var info_default_text := ""
 var info_temp_active := false
-var info_marquee_version := 0
-var info_marquee_tween: Tween
+var info_caption_version := 0
+var info_caption_tween: Tween
+var info_line_font_size := -1
 var hint_highlight_item_id := ""
 var hint_highlight_tween: Tween
+var hint_highlight_strength := 0.0
+var skip_orbit_entrance_once := false
+var preserve_coach_during_next_configure := false
 
 func _ready() -> void:
 	build()
@@ -136,35 +200,39 @@ func _apply_layout() -> void:
 	operation_legend.position = Vector2(center_x - legend_w * 0.5, legend_y)
 
 	var action_y := legend_y - 54.0 - ACTION_BUTTON_HEIGHT
+	if tutorial_caution_panel != null:
+		# Occupy exactly the same full row as Hint + Restart in regular levels.
+		tutorial_caution_panel.size = Vector2(TUTORIAL_CAUTION_WIDTH, TUTORIAL_CAUTION_HEIGHT)
+		tutorial_caution_panel.position = Vector2(status_x, action_y)
+		tutorial_caution_panel.pivot_offset = tutorial_caution_panel.size * 0.5
 	if current_is_tutorial:
-		bulbs_button.visible = false
-		restart_button.position = Vector2(status_x, action_y)
-		restart_button.size = Vector2(TOP_STATUS_SIZE.x, ACTION_BUTTON_HEIGHT)
+		hint_button.visible = false
+		restart_button.visible = false
 	else:
-		bulbs_button.visible = true
+		hint_button.visible = true
+		restart_button.visible = true
 		var half := (TOP_STATUS_SIZE.x - 47.0) * 0.5
-		bulbs_button.position = Vector2(status_x, action_y)
-		bulbs_button.size = Vector2(half, ACTION_BUTTON_HEIGHT)
+		hint_button.position = Vector2(status_x, action_y)
+		hint_button.size = Vector2(half, ACTION_BUTTON_HEIGHT)
 		restart_button.position = Vector2(status_x + half + 47.0, action_y)
 		restart_button.size = Vector2(half, ACTION_BUTTON_HEIGHT)
-	bulbs_button.pivot_offset = bulbs_button.size * 0.5
+	hint_button.pivot_offset = hint_button.size * 0.5
 	restart_button.pivot_offset = restart_button.size * 0.5
+	layout_lumens_badge()
 
-	# Orbit centered between the info line and the action row; radius fills the
-	# band but is capped by the fixed 1206-wide canvas so satellites never leave
-	# the content column (mockup radius 388 at reference size).
+	# Orbit centered between the info line and the action row. Its reference
+	# radius stays unchanged on larger canvases, preserving the iPhone 17 Pro
+	# clearances to the info line, action buttons, and floating Lumens badge.
 	var orbit_top := info_y + INFO_LINE_SIZE.y + 20.0
 	var orbit_bottom := action_y - 20.0
 	screen_center = Vector2(center_x, (orbit_top + orbit_bottom) * 0.5)
-	# Grow the orbit until a satellite's OUTER edge sits at SIDE_MARGIN — the same
-	# 67px margin as the Back/gear buttons and the LEVEL/MOVES pill — unless the
-	# vertical band is the tighter limit (short screens).
+	# Shrink only when an unusually constrained safe area cannot hold the reference
+	# composition; never grow past ORBIT_RADIUS on a spacious viewport.
 	var sat_half := 94.0  # satellite radius
 	var max_r_w := center_x - Layout.SIDE_MARGIN - sat_half
 	var max_r_v := (orbit_bottom - orbit_top) * 0.5 - sat_half
-	orbit_radius = maxf(300.0, minf(max_r_w, max_r_v))
+	orbit_radius = maxf(0.0, minf(float(ORBIT_RADIUS), minf(max_r_w, max_r_v)))
 	center_panel.position = screen_center - Vector2(CENTER_CIRCLE_RADIUS, CENTER_CIRCLE_RADIUS)
-
 	# Full-screen overlays cover the whole viewport.
 	if hint_popup != null:
 		hint_popup.layout_to_viewport(vp)
@@ -175,8 +243,7 @@ func _apply_layout() -> void:
 
 func build() -> void:
 	clear_hint_highlight()
-	for child in get_children():
-		child.queue_free()
+	Layout.clear_children_for_rebuild(self)
 	# Same fill as the primary Play/Continue button (mockup parity): diagonal
 	# PRIMARY_TOP→PRIMARY_BOTTOM gradient.
 	center_circle_texture = UIStyles.circle_gradient_texture(CENTER_CIRCLE_DIAMETER, UIStyles.PRIMARY_TOP, UIStyles.PRIMARY_BOTTOM)
@@ -198,6 +265,14 @@ func build() -> void:
 	center_circle.stretch_mode = TextureRect.STRETCH_SCALE
 	center_panel.add_child(center_circle)
 
+	center_flash = Panel.new()
+	center_flash.position = Vector2.ZERO
+	center_flash.size = center_panel.size
+	center_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center_flash.modulate.a = 0.0
+	center_flash.visible = false
+	center_panel.add_child(center_flash)
+
 	center_label = Label.new()
 	center_label.position = Vector2((CENTER_CIRCLE_DIAMETER - 490) * 0.5, (CENTER_CIRCLE_DIAMETER - 180) * 0.5)
 	center_label.size = Vector2(490, 180)
@@ -207,42 +282,41 @@ func build() -> void:
 	UIStyles.apply_font(center_label, UIStyles.FONT_EXTRABOLD, 101, Color.WHITE)
 	center_panel.add_child(center_label)
 
-	# The status pill is TWO independent, self-contained blocks — LEVEL (left) and
-	# MOVES (right). Each is a half-width rounded panel whose inner edge is a
-	# concave arc cut around the target; fill and border come from one SDF shape.
-	# two meet under the target badge, which hides the seam. Kept separate so each
-	# can highlight — and later animate — on its own.
+	# Two complete glass buttons touch at the center and continue underneath the
+	# target. The target sits above them and hides their shared inner seam.
 	var half_size := Vector2(TOP_STATUS_SIZE.x * 0.5, TOP_STATUS_SIZE.y)
-	var notch_c := TARGET_BUBBLE_SIZE.x * 0.5 + 16.0
+	var target_radius := TARGET_BUBBLE_SIZE.x * 0.5
+	var target_cover := target_radius + 16.0
 	var mid_y := TOP_STATUS_SIZE.y * 0.5
-	var text_w := half_size.x - notch_c
+	var text_w := half_size.x - target_cover
 
-	# LEFT (LEVEL) — notch cut on the inner (right) edge.
-	level_bg = make_status_block(Vector2(EDGE_MARGIN, TOP_STATUS_Y), half_size, Vector2(half_size.x, mid_y), notch_c)
+	# Each side clips its half of the same full pill texture. At rest the halves
+	# reconstruct one seamless surface; on press each half scales independently.
+	level_bg = make_status_block(Vector2(EDGE_MARGIN, TOP_STATUS_Y), half_size, true)
 	level_bg.pivot_offset = Vector2(text_w * 0.5, mid_y)
 	add_child(level_bg)
-	level_hover = make_status_hover(half_size, Vector2(half_size.x, mid_y), notch_c)
+	level_hover = make_status_hover(half_size, true)
 	level_bg.add_child(level_hover)
 	level_label = make_status_label()
 	level_label.position = Vector2(0, 0)
 	level_label.size = Vector2(text_w, TOP_STATUS_SIZE.y)
 	level_bg.add_child(level_label)
 	level_label.gui_input.connect(_on_level_panel_input)
-	level_label.mouse_exited.connect(func() -> void: UIStyles.press_hold(level_bg, false))
+	level_label.mouse_exited.connect(func() -> void: _press_status_block(level_bg, level_hover, false))
 	UIStyles.attach_hover_tint(level_label, level_hover)
 
-	# RIGHT (MOVES) — notch cut on the inner (left) edge.
-	moves_bg = make_status_block(Vector2(EDGE_MARGIN + half_size.x, TOP_STATUS_Y), half_size, Vector2(0, mid_y), notch_c)
-	moves_bg.pivot_offset = Vector2(notch_c + text_w * 0.5, mid_y)
+	# RIGHT (MOVES) — separate input/press area on the same shared surface.
+	moves_bg = make_status_block(Vector2(EDGE_MARGIN + half_size.x, TOP_STATUS_Y), half_size, false)
+	moves_bg.pivot_offset = Vector2(target_cover + text_w * 0.5, mid_y)
 	add_child(moves_bg)
-	moves_hover = make_status_hover(half_size, Vector2(0, mid_y), notch_c)
+	moves_hover = make_status_hover(half_size, false)
 	moves_bg.add_child(moves_hover)
 	moves_count_label = make_status_label()
-	moves_count_label.position = Vector2(notch_c, 0)
+	moves_count_label.position = Vector2(target_cover, 0)
 	moves_count_label.size = Vector2(text_w, TOP_STATUS_SIZE.y)
 	moves_bg.add_child(moves_count_label)
 	moves_count_label.gui_input.connect(_on_moves_panel_input)
-	moves_count_label.mouse_exited.connect(func() -> void: UIStyles.press_hold(moves_bg, false))
+	moves_count_label.mouse_exited.connect(func() -> void: _press_status_block(moves_bg, moves_hover, false))
 	UIStyles.attach_hover_tint(moves_count_label, moves_hover)
 
 	target_panel = Control.new()
@@ -282,15 +356,16 @@ func build() -> void:
 	# freshly rebuilt here, but the cached error-state would otherwise short-circuit
 	# the re-style (leaving a stale font size after a theme rebuild).
 	info_line_error_state = null
-	# Likewise clear the marquee's cached caption: the label was just recreated
+	info_line_font_size = -1
+	# Likewise clear the caption cache: the label was just recreated
 	# empty, so `set_info_default` must repopulate it even if the resting text is
 	# unchanged (else a theme/language rebuild leaves the info line blank).
 	info_default_text = ""
 	info_temp_active = false
 	info_icon = UIStyles.icon(UIStyles.ICON_INFO, info_panel, Vector2(90, 35), Vector2(50, 50), UIStyles.PURPLE)
 
-	# Scrolling-text lane, right of the icon, with a screen-space edge fade so the
-	# caption dissolves at the left/right just like the level-tile scroll fade.
+	# Caption lane, right of the icon, with a screen-space edge fade kept as a
+	# safety boundary outside the centered readable area.
 	info_clip = Control.new()
 	info_clip.position = Vector2(INFO_TEXT_LEFT, 0)
 	info_clip.size = Vector2(INFO_LINE_SIZE.x - INFO_TEXT_LEFT - INFO_CLIP_RIGHT_PAD, INFO_LINE_SIZE.y)
@@ -328,9 +403,11 @@ void fragment() {
 	info_clip.add_child(tutorial_help_label)
 
 	back_button = UIStyles.back_button(self, Vector2(EDGE_MARGIN, TOP_BUTTON_Y))
+	back_button.set_meta(&"screen_transition_role", &"back")
 	back_button.pressed.connect(func(): back_pressed.emit())
 
 	settings_button = UIStyles.circle_button(self, Vector2(1206.0 - EDGE_MARGIN - 127.0, TOP_BUTTON_Y), 127.0)
+	settings_button.set_meta(&"screen_transition_role", &"settings")
 	settings_button.pressed.connect(func(): settings_pressed.emit())
 	UIStyles.icon(UIStyles.ICON_GEAR, settings_button, Vector2(33, 33), Vector2(60, 60), UIStyles.TEXT)
 
@@ -344,19 +421,48 @@ void fragment() {
 	restart_button.pressed.connect(func(): restart_pressed.emit())
 	add_child(restart_button)
 
-	bulbs_button = Button.new()
-	bulbs_button.text = Locale.t("game.hint", "Hint")
-	bulbs_button.position = Vector2(70, ACTION_BUTTON_Y)
-	bulbs_button.size = Vector2(455, ACTION_BUTTON_HEIGHT)
-	bulbs_button.add_theme_font_size_override("font_size", 47)
-	UIStyles.menu_button(bulbs_button)
-	bulbs_button.pressed.connect(func():
+	hint_button = Button.new()
+	hint_button.text = ""
+	hint_button.position = Vector2(70, ACTION_BUTTON_Y)
+	hint_button.size = Vector2(455, ACTION_BUTTON_HEIGHT)
+	hint_button.add_theme_font_size_override("font_size", 47)
+	hint_button.clip_contents = false
+	UIStyles.menu_button(hint_button)
+	hint_button.pressed.connect(func():
 		if hint_popup != null and hint_popup.has_method("has_cached_result") and hint_popup.has_cached_result():
+			hint_requested.emit()
+		elif current_lumens < current_hint_cost:
 			hint_requested.emit()
 		else:
 			hint_popup.show_prompt()
 	)
-	add_child(bulbs_button)
+	add_child(hint_button)
+	# Серый слой поверх стеклянного фона кнопки (ниже подписи), с той же рамкой
+	# GLASS_BORDER, что у Restart. В тупике проявляется до непрозрачного, на возврате
+	# просто гаснет, открывая стекло — без «включения прозрачности» в конце и без «блика».
+	hint_dim = Panel.new()
+	hint_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Инсет на ширину рамки (3px): слой НЕ перекрывает рамку кнопки, поэтому видна ровно
+	# ОДНА рамка (родная GLASS_BORDER кнопки, как у Restart), без удвоения.
+	hint_dim.offset_left = 3
+	hint_dim.offset_top = 3
+	hint_dim.offset_right = -3
+	hint_dim.offset_bottom = -3
+	hint_dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hint_dim.modulate.a = 0.0
+	hint_button.add_child(hint_dim)
+	# Подпись «Hint» отдельным Label поверх слоя (встроенный текст кнопки убран, чтобы
+	# слой его не перекрывал и цвет плавно лерпился).
+	hint_label = Label.new()
+	hint_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hint_label.text = Locale.t("game.hint", "Hint")
+	UIStyles.apply_font(hint_label, UIStyles.FONT_SEMIBOLD, 47, UIStyles.TEXT)
+	hint_button.add_child(hint_label)
+	build_lumens_badge()
+	build_tutorial_caution()
 
 	operation_legend = OperationLegendScene.instantiate()
 	add_child(operation_legend)
@@ -377,55 +483,306 @@ void fragment() {
 	coach_overlay.connect("showing_started", _on_coach_showing_started)
 	coach_overlay.connect("hiding_started", _on_coach_hiding_started)
 	_apply_layout()
+	# После ребилда (смена темы/языка) сразу восстанавливаем «серое» состояние подсказки
+	# и бейджа, если были в тупике — иначе новый оверлей бейджа рождается прозрачным и на
+	# кадр показывает фиолетовый (аналог восстановления подсветки в Main.show_game).
+	if _hint_dimmed:
+		_apply_hint_dim(1.0)
 
-func configure(title_text: String, current_number: int, target_number: int, moves: int, thresholds: Array, star_bands: Array, orbit_items: Array, allowed_ops: Array, failed: bool, hint_points: int, tutorial: bool = false, tutorial_help: String = "", coach_hint: Dictionary = {}) -> void:
+func build_tutorial_caution() -> void:
+	if tutorial_caution_tween != null and tutorial_caution_tween.is_valid():
+		tutorial_caution_tween.kill()
+	tutorial_caution_panel = Button.new()
+	tutorial_caution_panel.visible = false
+	tutorial_caution_panel.focus_mode = Control.FOCUS_NONE
+	tutorial_caution_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	tutorial_caution_panel.z_index = 30
+	tutorial_caution_panel.size = Vector2(TUTORIAL_CAUTION_WIDTH, TUTORIAL_CAUTION_HEIGHT)
+	tutorial_caution_panel.add_theme_font_size_override("font_size", 47)
+	# Match Hint / Restart: same glass surface, geometry, semibold size and press
+	# interaction. The visible caption is a separate label so only its glyphs can
+	# receive the same diagonal purple gradient used by the ORBIT wordmark.
+	UIStyles.menu_button(tutorial_caution_panel)
+	tutorial_caution_panel.text = ""
+	tutorial_caution_panel.pressed.connect(_on_tutorial_caution_pressed)
+	add_child(tutorial_caution_panel)
+
+	tutorial_caution_label = Label.new()
+	tutorial_caution_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tutorial_caution_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	tutorial_caution_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tutorial_caution_label.z_index = 2
+	UIStyles.apply_font(tutorial_caution_label, UIStyles.FONT_SEMIBOLD, 47, Color.WHITE)
+	tutorial_caution_panel.add_child(tutorial_caution_label)
+	_update_tutorial_caution_copy()
+	_sync_tutorial_caution_visibility()
+
+func _update_tutorial_caution_copy() -> void:
+	if tutorial_caution_panel == null or tutorial_caution_label == null:
+		return
+	var caption := Locale.t("tutorial.caution.title", "Tutorial Safety Card").to_upper()
+	var caption_width := UIStyles.FONT_SEMIBOLD.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, 47).x
+	var caption_height := 72.0
+	tutorial_caution_label.text = caption
+	tutorial_caution_label.position = Vector2(
+		(tutorial_caution_panel.size.x - caption_width) * 0.5,
+		(tutorial_caution_panel.size.y - caption_height) * 0.5
+	)
+	tutorial_caution_label.size = Vector2(caption_width, caption_height)
+	tutorial_caution_label.material = UIStyles.gradient_text_material(
+		UIStyles.PRIMARY_TOP,
+		UIStyles.PRIMARY_BOTTOM,
+		tutorial_caution_label.size
+	)
+
+func _on_tutorial_caution_pressed() -> void:
+	if not current_is_tutorial:
+		return
+	show_temporary_help(
+		Locale.t("tutorial.caution.info", "Tutorials block mistakes. Real levels do not."),
+		false
+	)
+
+func show_tutorial_caution() -> void:
+	if not current_is_tutorial or tutorial_caution_panel == null:
+		return
+	_update_tutorial_caution_copy()
+	if tutorial_caution_tween != null and tutorial_caution_tween.is_valid():
+		tutorial_caution_tween.kill()
+	tutorial_caution_panel.visible = true
+	tutorial_caution_panel.pivot_offset = tutorial_caution_panel.size * 0.5
+	tutorial_caution_panel.modulate.a = 1.0
+	tutorial_caution_panel.scale = Vector2.ONE
+	tutorial_caution_tween = tutorial_caution_panel.create_tween()
+	tutorial_caution_tween.tween_property(tutorial_caution_panel, "scale", Vector2(1.04, 1.04), 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tutorial_caution_tween.tween_property(tutorial_caution_panel, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+func _sync_tutorial_caution_visibility() -> void:
+	if tutorial_caution_tween != null and tutorial_caution_tween.is_valid():
+		tutorial_caution_tween.kill()
+	if tutorial_caution_panel == null:
+		return
+	tutorial_caution_panel.visible = current_is_tutorial
+	tutorial_caution_panel.modulate.a = 1.0
+	tutorial_caution_panel.scale = Vector2.ONE
+
+func hide_tutorial_caution() -> void:
+	if tutorial_caution_tween != null and tutorial_caution_tween.is_valid():
+		tutorial_caution_tween.kill()
+	if tutorial_caution_panel != null:
+		tutorial_caution_panel.visible = false
+		tutorial_caution_panel.modulate.a = 1.0
+		tutorial_caution_panel.scale = Vector2.ONE
+
+func configure(title_text: String, current_number: int, target_number: int, moves: int, star_mode: String, star_bands: Array, orbit_items: Array, allowed_ops: Array, failed: bool, lumens: int, hint_cost: int, tutorial: bool = false, tutorial_help: String = "", coach_hint: Dictionary = {}, placeholder: bool = false) -> void:
 	var previous_moves := current_moves
 	if moves != previous_moves:
 		clear_hint_highlight()
 	level_failed = failed
 	current_number_value = current_number
-	current_hint_points = hint_points
+	current_lumens = lumens
+	current_hint_cost = hint_cost
 	current_moves = moves
 	current_target_value = target_number
-	current_thresholds = thresholds.duplicate()
+	current_star_mode = star_mode
 	current_star_bands = star_bands.duplicate(true)
 	current_is_tutorial = tutorial
+	current_is_placeholder = placeholder
+	_sync_tutorial_caution_visibility()
 	if hint_popup != null:
-		hint_popup.configure_state(current_moves, current_hint_points)
+		hint_popup.configure_state(current_moves, current_lumens, current_hint_cost)
 	level_label.text = title_text
-	goal_label.text = str(target_number)
-	tutorial_help_text_current = fail_comment_text() if failed else (tutorial_help if tutorial else progress_comment_text(moves))
+	goal_label.text = "?" if placeholder else str(target_number)
+	tutorial_help_text_current = (
+		Locale.t("game.placeholder", "This level is being prepared.")
+		if placeholder
+		else fail_comment_text() if failed
+		else tutorial_help if tutorial
+		else progress_comment_text(moves)
+	)
+	# The info row carries live gameplay context and remains visible in tutorials,
+	# including while the coach overlay is presenting a step.
 	info_panel.visible = true
 	tutorial_help_label.visible = true
 	set_info_default(tutorial_help_text_current, failed)
-	center_label.text = str(current_number)
-	if last_center_number != current_number:
+	# Center number: shrink the font for big values or a runaway multiply chain
+	# so the digits stay inside the circle instead of
+	# spilling past its edge. Small numbers keep the full 101px.
+	var center_text := "?" if placeholder else str(current_number)
+	var center_font := 101
+	while center_font > 44 and UIStyles.FONT_EXTRABOLD.get_string_size(center_text, HORIZONTAL_ALIGNMENT_CENTER, -1, center_font).x > CENTER_CIRCLE_DIAMETER - 50.0:
+		center_font -= 3
+	UIStyles.apply_font(center_label, UIStyles.FONT_EXTRABOLD, center_font, Color.WHITE)
+	center_label.text = center_text
+	# 4.4: pop только на реальном ходу (moves выросли), а не при ОТКРЫТИИ уровня
+	# (свежая загрузка / сентинел / возврат из меню — там moves не растут).
+	if last_center_number != current_number and moves > previous_moves:
 		pop_center_number()
-		last_center_number = current_number
+	last_center_number = current_number
 	moves_count_label.text = Locale.t("game.moves", "MOVES %d") % moves
+	# Tutorials still count real taps even though they award no stars. Keep the
+	# MOVES half of the status pill visible so that relationship is explicit.
 	moves_count_label.visible = true
+	moves_bg.visible = true
 	goal_label.size = TARGET_BUBBLE_SIZE
 	operation_legend.configure_ops(allowed_ops)
-	operation_legend.visible = true
-	bulbs_button.visible = not tutorial
-	update_hint_button_label(hint_points)
+	operation_legend.visible = not placeholder
+	hint_button.visible = not tutorial
+	# A hint is useless both in a dead end and in an unfinished placeholder.
+	hint_button.disabled = (level_failed or placeholder) and not tutorial
+	update_hint_button_label(lumens)
 	_apply_layout()
-	if level_failed and not previous_failed_state:
-		pulse_failure_controls()
+	# Плавно гасим подсказку (с бейджем) при входе в тупик и возвращаем при рестарте.
+	# Рестарт-кнопка НЕ подпрыгивает — и так очевидно, что жать её.
+	var should_dim_hint := (level_failed or placeholder) and not current_is_tutorial
+	# Анимируем затемнение ТОЛЬКО когда состояние сменилось ХОДОМ (moves изменились). На
+	# ре-показе экрана (возврат из настроек/меню) — сразу, без «серения» и мигания.
+	if should_dim_hint != _hint_dimmed:
+		set_hint_dimmed(should_dim_hint, moves != previous_moves)
+	elif should_dim_hint:
+		set_hint_dimmed(should_dim_hint, false)
+	_hint_dimmed = should_dim_hint
 	previous_failed_state = level_failed
 	set_orbit_items(orbit_items)
-	if tutorial and not coach_hint.is_empty():
+	if preserve_coach_during_next_configure:
+		preserve_coach_during_next_configure = false
+	elif tutorial and not coach_hint.is_empty():
 		coach_overlay.configure_context(coach_context())
 		coach_overlay.show_hint(coach_hint)
 	else:
 		coach_overlay.hide_hint()
+	info_panel.visible = true
 	queue_redraw()
+
+func active_coach_snapshot() -> Dictionary:
+	if coach_overlay == null or not coach_overlay.has_method("state_snapshot"):
+		return {}
+	return coach_overlay.state_snapshot() as Dictionary
+
+func prepare_coach_restore() -> void:
+	preserve_coach_during_next_configure = true
+
+func fade_active_coach_for_navigation() -> void:
+	if coach_overlay != null and coach_overlay.visible:
+		await coach_overlay.fade_for_navigation()
+
+func queue_coach_snapshot(snapshot: Dictionary, entrance_delay: float = 0.0) -> void:
+	if snapshot.is_empty() or coach_overlay == null:
+		return
+	var hint := {
+		"steps": (snapshot.get("steps", []) as Array).duplicate(true),
+		"progress_start": int(snapshot.get("progress_start", 0)),
+		"progress_total": int(snapshot.get("progress_total", 1)),
+	}
+	coach_overlay.configure_context(coach_context())
+	coach_overlay.show_hint(hint, entrance_delay)
+	var restore_step := maxi(0, int(snapshot.get("step_index", 0)))
+	if restore_step > 0 and restore_step < coach_overlay.steps.size():
+		coach_overlay.step_index = restore_step
+		coach_overlay.apply_step()
 
 func pop_center_number() -> void:
 	UIStyles.pop_scale(center_label, 1.08, 0.08, 0.14)
 
-func pulse_failure_controls() -> void:
-	UIStyles.pop_scale(restart_button, 1.04, 0.13, 0.18)
+func flash_center(op: String) -> void:
+	if center_flash == null:
+		return
+	if center_flash_tween != null and center_flash_tween.is_valid():
+		center_flash_tween.kill()
+	var style := StyleBoxFlat.new()
+	style.bg_color = UIStyles.operation_border(op)
+	UIStyles._set_radius(style, int(CENTER_CIRCLE_RADIUS))
+	center_flash.add_theme_stylebox_override("panel", style)
+	center_flash.visible = true
+	center_flash.modulate.a = 0.0
+	center_flash_tween = center_flash.create_tween()
+	center_flash_tween.tween_property(center_flash, "modulate:a", 0.5, 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	center_flash_tween.tween_property(center_flash, "modulate:a", 0.0, 0.25).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	center_flash_tween.finished.connect(func() -> void:
+		if center_flash != null:
+			center_flash.visible = false
+	)
+
+func set_hint_dimmed(dimmed: bool, animate: bool) -> void:
+	if hint_button == null:
+		return
+	if hint_button.has_meta("dim_tween"):
+		var previous := hint_button.get_meta("dim_tween") as Tween
+		if previous != null and previous.is_valid():
+			previous.kill()
+	var target := 1.0 if dimmed else 0.0
+	if not animate:
+		if dimmed:
+			_apply_hint_dim(target)
+		else:
+			_restore_hint_enabled_look()
+		return
+	var tween := hint_button.create_tween()
+	hint_button.set_meta("dim_tween", tween)
+	tween.tween_method(_apply_hint_dim, _hint_dim_progress, target, 0.28).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	if not dimmed:
+		tween.tween_callback(_restore_hint_enabled_look)
+
+# t: 0 = обычная стеклянная кнопка, 1 = вид плитки «Недоступно» из легенды (те же
+# operation_plate / operation_text, непрозрачно, БЕЗ рамки). Бейдж гаснет вместе с кнопкой.
+func _apply_hint_dim(t: float) -> void:
+	if hint_button == null or hint_dim == null:
+		return
+	_hint_dim_progress = clampf(t, 0.0, 1.0)
+	# Серый слой в цвете НЕДОСТУПНОГО спутника орбиты (по теме), БЕЗ своей рамки и
+	# инсетнут на 3px — видна ровно родная рамка кнопки (GLASS_BORDER, как у Restart),
+	# без удвоения. Стеклянный фон кнопки НЕ трогаем — слой просто гаснет на возврате.
+	var dim_bg: Color = UIStyles.BG.lerp(Color.WHITE, 0.03) if UIStyles.is_dark() else Color("#F1F0F5")
+	var style := StyleBoxFlat.new()
+	style.bg_color = dim_bg
+	UIStyles._set_radius(style, UIStyles.CORNER - 3)
+	hint_dim.add_theme_stylebox_override("panel", style)
+	hint_dim.modulate.a = _hint_dim_progress
+	if hint_label != null:
+		hint_label.add_theme_color_override("font_color", UIStyles.TEXT.lerp(UIStyles.DISABLED, _hint_dim_progress))
+	_apply_badge_dim(_hint_dim_progress)
+
+# Бейдж люменов: в непрозрачный серый (та же плитка «Недоступно»), плавным цвет-лерпом.
+func _apply_badge_dim(t: float) -> void:
+	if lumens_badge == null or lumens_badge_label == null:
+		return
+	var progress := clampf(t, 0.0, 1.0)
+	var affordable := current_lumens >= current_hint_cost
+	# ОДИН слой: bg бейджа лерпится между включённым видом (ПЛОСКИЙ фиолет / muted) и
+	# серым спутником. Плоские цвета → плавно, без прыжка; один слой → бейдж НЕ мигает при
+	# затемнении экрана на переходах между экранами (там modulate масштабирует альфу).
+	var enabled_bg: Color = (UIStyles.PRIMARY_TOP.lerp(UIStyles.PRIMARY_BOTTOM, 0.5)) if affordable else (Color("#2E283C") if UIStyles.is_dark() else Color("#ECEBF1"))
+	var enabled_text: Color = Color.WHITE if affordable else UIStyles.operation_text("unavailable")
+	var dim_bg: Color = UIStyles.BG.lerp(Color.WHITE, 0.03) if UIStyles.is_dark() else Color("#F1F0F5")
+	var style := StyleBoxFlat.new()
+	style.bg_color = enabled_bg.lerp(dim_bg, progress)
+	UIStyles._set_radius(style, int(lumens_badge.size.y * 0.5))
+	lumens_badge.add_theme_stylebox_override("panel", style)
+	var text_col := enabled_text.lerp(UIStyles.DISABLED, progress)
+	lumens_badge_label.add_theme_color_override("font_color", text_col)
+	if lumens_badge_icon != null:
+		UIStyles.recolor_sparkle_mark(lumens_badge_icon, text_col)
+	if lumens_badge_border != null and lumens_badge_border is LumensBadgeOutline:
+		var outline := lumens_badge_border as LumensBadgeOutline
+		outline.outline_color = UIStyles.GLASS_BORDER
+		outline.outline_width = 3.0
+		outline.queue_redraw()
+
+func _restore_hint_enabled_look() -> void:
+	_hint_dim_progress = 0.0
+	# Стеклянный фон кнопки не трогали — достаточно погасить серые слои и вернуть текст.
+	if hint_dim != null:
+		hint_dim.modulate.a = 0.0
+	if hint_label != null:
+		hint_label.add_theme_color_override("font_color", UIStyles.TEXT)
+	update_lumens_badge(current_lumens)
+
+# LEVEL / MOVES shrink around the center of their visible text lane. Their inner
+# edges remain fully covered by the target throughout the press animation.
+func _press_status_block(panel: Control, _hover: Panel, pressed: bool) -> void:
+	if panel == null:
+		return
+	UIStyles.press_hold(panel, pressed)
 
 func _on_moves_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
@@ -433,13 +790,13 @@ func _on_moves_panel_input(event: InputEvent) -> void:
 		return
 	if mouse_event.pressed:
 		AudioManagerScript.play_ui_tap()
-		UIStyles.press_hold(moves_bg, true)
+		_press_status_block(moves_bg, moves_hover, true)
 		if current_is_tutorial:
 			show_temporary_help(Locale.t("game.tap.moves_tut", "Tutorial moves earn no stars."), false)
 		else:
 			show_temporary_help(star_requirements_text(), false)
 	else:
-		UIStyles.press_hold(moves_bg, false)
+		_press_status_block(moves_bg, moves_hover, false)
 
 func _on_level_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
@@ -447,13 +804,13 @@ func _on_level_panel_input(event: InputEvent) -> void:
 		return
 	if mouse_event.pressed:
 		AudioManagerScript.play_ui_tap()
-		UIStyles.press_hold(level_bg, true)
+		_press_status_block(level_bg, level_hover, true)
 		if current_is_tutorial:
 			show_temporary_help(Locale.t("game.tap.level_tut", "One step at a time."), false)
 		else:
 			show_temporary_help(Locale.t("game.tap.level", "Beat this to unlock the next."), false)
 	else:
-		UIStyles.press_hold(level_bg, false)
+		_press_status_block(level_bg, level_hover, false)
 
 func _on_goal_panel_input(event: InputEvent) -> void:
 	var mouse_event := event as InputEventMouseButton
@@ -478,19 +835,41 @@ func _on_center_panel_input(event: InputEvent) -> void:
 		UIStyles.press_hold(center_panel, false)
 
 func star_requirements_text() -> String:
-	if current_star_bands.is_empty() and current_thresholds.size() < 3:
-		return Locale.t("game.stars.fewer", "Fewer moves earn more stars.")
-	if not current_star_bands.is_empty():
-		if current_star_bands.size() == 1 and int((current_star_bands[0] as Dictionary).get("stars", 0)) == 3:
-			return Locale.t("game.stars.three_in", "%d moves for 3 stars.") % int((current_star_bands[0] as Dictionary).get("moves", 0))
-		var parts: Array[String] = []
-		for raw_band in current_star_bands:
-			var band: Dictionary = raw_band as Dictionary
-			parts.append("%s %d" % [star_text(int(band.get("stars", 1))), int(band.get("moves", 0))])
-		return " · ".join(parts)
-	if current_thresholds[0] == current_thresholds[1] and current_thresholds[1] == current_thresholds[2]:
-		return Locale.t("game.stars.keep3", "Finish to keep 3 stars.")
-	return "★★★ %d · ★★ %d · ★ %d" % [int(current_thresholds[0]), int(current_thresholds[1]), int(current_thresholds[2])]
+	match current_star_mode:
+		LevelData.STAR_MODE_TUTORIAL:
+			return ""
+		LevelData.STAR_MODE_ALWAYS_THREE:
+			if current_star_bands.is_empty():
+				return ""
+			var band: Dictionary = current_star_bands[0] as Dictionary
+			var winning_lengths: Array = (band.get("winning_lengths", []) as Array).duplicate()
+			winning_lengths.sort()
+			var length_parts: Array[String] = []
+			for length in winning_lengths:
+				length_parts.append(str(int(length)))
+			return Locale.t(
+				"game.stars.exact_lengths",
+				"Star goals: %s %s",
+			) % [star_text(3), ", ".join(length_parts)]
+		LevelData.STAR_MODE_TIERED:
+			return star_band_ranges_text(current_star_bands)
+	return ""
+
+func star_band_ranges_text(bands: Array) -> String:
+	# min_moves/max_moves are the authoritative emitted intervals.
+	var parts: Array[String] = []
+	for raw_band in bands:
+		var band: Dictionary = raw_band as Dictionary
+		var stars := int(band.get("stars", 1))
+		var lower := int(band.get("min_moves", -1))
+		var upper := int(band.get("max_moves", -1))
+		var moves_text := ""
+		if lower == upper:
+			moves_text = str(upper)
+		else:
+			moves_text = "%d–%d" % [lower, upper]
+		parts.append("%s %s" % [star_text(stars), moves_text])
+	return Locale.t("game.stars.band_list", "Star goals: %s") % " · ".join(parts)
 
 func star_text(count: int) -> String:
 	match count:
@@ -501,64 +880,138 @@ func star_text(count: int) -> String:
 	return "★"
 
 func progress_comment_text(moves: int) -> String:
-	if current_thresholds.size() < 3:
+	if moves == 0:
 		return Locale.t("game.info", "Tap orbit numbers to reach the target.")
-	if not current_star_bands.is_empty():
-		if moves == 0:
-			return Locale.t("game.info", "Tap orbit numbers to reach the target.")
+	if current_star_mode == LevelData.STAR_MODE_ALWAYS_THREE:
+		return Locale.t("game.stars.keep3", "Reach the target — ★★★ on completion.")
+	if current_star_mode == LevelData.STAR_MODE_TIERED:
 		for raw_band in current_star_bands:
 			var band: Dictionary = raw_band as Dictionary
-			if moves <= int(band.get("moves", 0)):
-				match int(band.get("stars", 1)):
+			if moves <= int(band.get("max_moves", -1)):
+				match int(band.get("stars", 0)):
 					3:
 						return Locale.t("game.progress.on3", "On track for 3 stars.")
 					2:
 						return Locale.t("game.progress.on2", "2 stars still in reach.")
 					_:
 						return Locale.t("game.progress.almost", "Almost there — reach the target.")
-		return Locale.t("game.progress.almost", "Almost there — reach the target.")
-	var three_star_moves := int(current_thresholds[0])
-	var two_star_moves := int(current_thresholds[1])
-	if moves == 0:
-		return Locale.t("game.info", "Tap orbit numbers to reach the target.")
-	if moves <= three_star_moves:
-		return Locale.t("game.progress.on3", "On track for 3 stars.")
-	if moves <= two_star_moves:
-		return Locale.t("game.progress.on2", "2 stars still in reach.")
 	return Locale.t("game.progress.almost", "Almost there — reach the target.")
 
 func fail_comment_text() -> String:
+	# Автоматическое поражение наступает только когда на доске действительно не
+	# осталось применимых ходов. Нерешаемую, но всё ещё активную позицию интерфейс
+	# не раскрывает — её можно проверить только осознанным запросом Hint.
 	return Locale.t("game.fail", "No moves left — tap Restart.")
 
-func apply_info_line_style(error: bool = false) -> void:
-	if info_line_error_state != null and bool(info_line_error_state) == error:
+func apply_info_line_style(error: bool = false, font_size: int = 40) -> void:
+	if info_line_error_state != null and bool(info_line_error_state) == error and info_line_font_size == font_size:
 		return
 	if error:
 		var danger_bg := Color(UIStyles.DANGER_BOTTOM.r, UIStyles.DANGER_BOTTOM.g, UIStyles.DANGER_BOTTOM.b, 0.14)
 		var danger_border := Color(UIStyles.DANGER_BOTTOM.r, UIStyles.DANGER_BOTTOM.g, UIStyles.DANGER_BOTTOM.b, 0.5)
 		info_panel.add_theme_stylebox_override("panel", UIStyles.card(danger_bg, danger_border, 40))
-		UIStyles.apply_font(tutorial_help_label, UIStyles.FONT_SEMIBOLD, 40, UIStyles.DANGER_TEXT)
+		UIStyles.apply_font(tutorial_help_label, UIStyles.FONT_SEMIBOLD, font_size, UIStyles.DANGER_TEXT)
 		if info_icon != null:
 			info_icon.modulate = UIStyles.DANGER_TEXT
 	else:
 		info_panel.add_theme_stylebox_override("panel", UIStyles.glass_panel(40))
-		UIStyles.apply_font(tutorial_help_label, UIStyles.FONT_MEDIUM, 40, UIStyles.MUTED)
+		UIStyles.apply_font(tutorial_help_label, UIStyles.FONT_MEDIUM, font_size, UIStyles.MUTED)
 		if info_icon != null:
 			info_icon.modulate = UIStyles.PURPLE
 	info_line_error_state = error
+	info_line_font_size = font_size
 
-func update_hint_button_label(_hint_points: int) -> void:
-	if bulbs_button != null:
-		bulbs_button.text = Locale.t("game.hint", "Hint")
+func update_hint_button_label(_lumens: int) -> void:
+	if hint_label != null:
+		hint_label.text = Locale.t("game.hint", "Hint")
+	update_lumens_badge(_lumens)
 
-# A temporary caption (operator tap / panel tap): marquees in, rests 3s, then
-# marquees out and the default caption returns.
+func build_lumens_badge() -> void:
+	if hint_button == null:
+		return
+	lumens_badge = Panel.new()
+	lumens_badge.name = "LumensBadge"
+	lumens_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lumens_badge.z_index = 20
+	hint_button.add_child(lumens_badge)
+
+	lumens_badge_icon = UIStyles.sparkle_mark(lumens_badge, Vector2.ZERO, Vector2(30, 30), Color.WHITE)
+	lumens_badge_label = Label.new()
+	lumens_badge_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lumens_badge_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UIStyles.apply_font(lumens_badge_label, UIStyles.FONT_BOLD, 38, Color.WHITE)
+	lumens_badge.add_child(lumens_badge_label)
+
+	lumens_badge_border = LumensBadgeOutline.new()
+	lumens_badge_border.name = "LumensBadgeBorder"
+	lumens_badge_border.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lumens_badge.add_child(lumens_badge_border)
+	layout_lumens_badge()
+	update_lumens_badge(current_lumens)
+
+func layout_lumens_badge() -> void:
+	if hint_button == null or lumens_badge == null:
+		return
+	var badge_h := 68.0
+	var min_w := 112.0
+	var digits := str(max(0, current_lumens)).length()
+	var badge_w := maxf(min_w, 84.0 + float(digits) * 22.0)
+	var badge_size := Vector2(badge_w, badge_h)
+	var badge_pos := Vector2(hint_button.size.x - badge_size.x - 27.0, -33.0)
+	lumens_badge.position = badge_pos
+	lumens_badge.size = badge_size
+	lumens_badge.visible = hint_button.visible
+	if lumens_badge_border != null:
+		lumens_badge_border.position = Vector2.ZERO
+		lumens_badge_border.size = badge_size
+	if lumens_badge_icon != null:
+		lumens_badge_icon.position = Vector2(15.0, 18.0)
+		lumens_badge_icon.size = Vector2(33.0, 33.0)
+	if lumens_badge_label != null:
+		lumens_badge_label.position = Vector2(52.0, 0.0)
+		lumens_badge_label.size = Vector2(badge_size.x - 62.0, badge_size.y)
+
+func update_lumens_badge(balance: int) -> void:
+	current_lumens = balance
+	if lumens_badge == null or lumens_badge_label == null or lumens_badge_icon == null:
+		return
+	layout_lumens_badge()
+	lumens_badge_label.text = str(max(0, balance))
+	# Единый источник вида бейджа — _apply_badge_dim: он лерпит цвет ОДНОГО слоя между
+	# «включённым» (плоский фиолет / muted) и «серым» (спутник) по _hint_dim_progress.
+	# Один слой → бейдж не мигает при затемнении экрана на переходах между экранами.
+	_apply_badge_dim(_hint_dim_progress)
+
+# A temporary caption (operator tap / panel tap) fades in, rests 3s, then the
+# default caption returns.
 func show_temporary_help(text: String, _error: bool = false) -> void:
+	var repeats_visible_text := info_temp_active and tutorial_help_label != null and tutorial_help_label.text == text
 	info_temp_active = true
-	_play_info_marquee(text, true, level_failed)
+	if repeats_visible_text:
+		_restart_temporary_info_timer(level_failed)
+	else:
+		show_info_caption(text, true, level_failed)
 
-# The resting caption (progress / fail text). Only re-runs the marquee when the
-# text actually changes or a temporary message is currently occupying the line.
+# Repeated taps on the same source only renew the hold timeout. Keep the current
+# alpha instead of resetting it to zero, so a visible caption never blinks.
+func _restart_temporary_info_timer(error: bool) -> void:
+	if tutorial_help_label == null:
+		return
+	info_caption_version += 1
+	var version := info_caption_version
+	if info_caption_tween != null and info_caption_tween.is_valid():
+		info_caption_tween.kill()
+	if info_line_error_state == null or bool(info_line_error_state) != error:
+		prepare_info_caption(tutorial_help_label.text, error)
+	info_caption_tween = create_tween()
+	# A repeat during the initial fade or the final fade-out resumes from the
+	# current opacity; it never jumps back to transparent.
+	if tutorial_help_label.modulate.a < 0.999:
+		info_caption_tween.tween_property(tutorial_help_label, "modulate:a", 1.0, 0.10).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_queue_temporary_info_timeout(info_caption_tween, version)
+
+# The resting caption (progress / fail text). It only transitions again when
+# the text changes or a temporary message is currently occupying the line.
 func set_info_default(text: String, error: bool) -> void:
 	var changed := text != info_default_text
 	info_default_text = text
@@ -568,97 +1021,112 @@ func set_info_default(text: String, error: bool) -> void:
 		return
 	if changed or info_temp_active:
 		info_temp_active = false
-		_play_info_marquee(text, false, error)
+		show_info_caption(text, false, error)
 
 func set_info_immediate(text: String, error: bool) -> void:
 	if tutorial_help_label == null:
 		return
-	info_marquee_version += 1
-	if info_marquee_tween != null and info_marquee_tween.is_valid():
-		info_marquee_tween.kill()
-	apply_info_line_style(error)
-	var new_w := _info_text_width(text)
-	tutorial_help_label.text = text
-	tutorial_help_label.size = Vector2(new_w, INFO_LINE_SIZE.y)
-	tutorial_help_label.position.x = _info_rest_x_for_width(new_w)
+	info_caption_version += 1
+	if info_caption_tween != null and info_caption_tween.is_valid():
+		info_caption_tween.kill()
+	prepare_info_caption(text, error)
+	tutorial_help_label.modulate.a = 1.0
 
-func _info_text_width(text: String) -> float:
-	return UIStyles.FONT_MEDIUM.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 40).x
+func info_text_font_size(text: String, error: bool) -> int:
+	var font: Font = UIStyles.FONT_SEMIBOLD if error else UIStyles.FONT_MEDIUM
+	var size := 40
+	var readable_width := info_readable_width()
+	while size > 34 and font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > readable_width:
+		size -= 1
+	return size
+
+func _info_text_width(text: String, font_size: int, error: bool) -> float:
+	var font: Font = UIStyles.FONT_SEMIBOLD if error else UIStyles.FONT_MEDIUM
+	return font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+
+func info_readable_width() -> float:
+	if info_clip == null:
+		return 0.0
+	return maxf(0.0, info_clip.size.x - INFO_FADE_PX * 2.0 - INFO_TEXT_SAFE_INSET * 2.0)
+
+func prepare_info_caption(text: String, error: bool) -> void:
+	if tutorial_help_label == null:
+		return
+	var font_size := info_text_font_size(text, error)
+	apply_info_line_style(error, font_size)
+	var text_width := _info_text_width(text, font_size, error)
+	tutorial_help_label.text = text
+	tutorial_help_label.size = Vector2(text_width, INFO_LINE_SIZE.y)
+	tutorial_help_label.position.x = _info_rest_x_for_width(text_width)
 
 func _info_rest_x_for_width(text_width: float) -> float:
 	if info_clip == null:
 		return INFO_REST_X
-	var readable_left := INFO_FADE_PX
-	var readable_w := maxf(0.0, info_clip.size.x - INFO_FADE_PX * 2.0)
+	var readable_left := INFO_FADE_PX + INFO_TEXT_SAFE_INSET
+	var readable_w := info_readable_width()
 	if text_width <= readable_w:
 		return readable_left + (readable_w - text_width) * 0.5
 	return readable_left
 
-func _play_info_marquee(text: String, temp: bool, error: bool) -> void:
+func show_info_caption(text: String, temp: bool, error: bool) -> void:
 	if info_clip == null:
 		return
-	info_marquee_version += 1
-	var v := info_marquee_version
-	if info_marquee_tween != null and info_marquee_tween.is_valid():
-		info_marquee_tween.kill()
-	apply_info_line_style(error)
-	var clip_w := info_clip.size.x
-	var new_w := _info_text_width(text)
-	var cur_out_x := -tutorial_help_label.size.x - 40.0
-	var new_out_x := -new_w - 40.0
-	info_marquee_tween = create_tween()
-	# Slide the current caption out to the left (skip if already off-screen/empty).
-	if tutorial_help_label.text != "" and tutorial_help_label.position.x > cur_out_x:
-		info_marquee_tween.tween_property(tutorial_help_label, "position:x", cur_out_x, 0.22).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	# Swap the text and jump to the right-hand entry point (inside the fade).
-	info_marquee_tween.tween_callback(func() -> void:
-		if v != info_marquee_version:
-			return
-		tutorial_help_label.text = text
-		tutorial_help_label.size = Vector2(new_w, INFO_LINE_SIZE.y)
-		tutorial_help_label.position.x = clip_w
-	)
-	# Glide in and rest centered between the left/right fades when it fits.
-	info_marquee_tween.tween_property(tutorial_help_label, "position:x", _info_rest_x_for_width(new_w), 0.40).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	info_caption_version += 1
+	var version := info_caption_version
+	if info_caption_tween != null and info_caption_tween.is_valid():
+		info_caption_tween.kill()
+	prepare_info_caption(text, error)
+	tutorial_help_label.modulate.a = 0.0
+	info_caption_tween = create_tween()
+	info_caption_tween.tween_property(tutorial_help_label, "modulate:a", 1.0, 0.18).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	if temp:
-		info_marquee_tween.tween_interval(3.0)
-		info_marquee_tween.tween_property(tutorial_help_label, "position:x", new_out_x, 0.24).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-		info_marquee_tween.tween_callback(func() -> void:
-			if v == info_marquee_version:
-				info_temp_active = false
-				_play_info_marquee(info_default_text, false, level_failed)
-		)
+		_queue_temporary_info_timeout(info_caption_tween, version)
+
+func _queue_temporary_info_timeout(tween: Tween, version: int) -> void:
+	tween.tween_interval(INFO_TEMP_HOLD_SECONDS)
+	tween.tween_property(tutorial_help_label, "modulate:a", 0.0, 0.16).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	tween.tween_callback(func() -> void:
+		if version == info_caption_version:
+			info_temp_active = false
+			show_info_caption(info_default_text, false, level_failed)
+	)
 
 # --- Status pill (LEVEL / MOVES) building blocks ------------------------------
 
-# A half-width status block: the straight outer border is the same glass style as
-# the rest of the UI; the shader only cuts the target notch and draws that arc.
-func make_status_block(pos: Vector2, size: Vector2, notch_center: Vector2, notch_radius: float) -> Panel:
-	var panel := Panel.new()
-	panel.position = pos
-	panel.size = size
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_theme_stylebox_override("panel", UIStyles.glass_panel(67))
-	panel.material = status_notch_material(notch_center, notch_radius, size, UIStyles.GLASS_BORDER)
-	return panel
+# One independently scalable half of a shared full-width pill. Both sides render
+# the same cached texture at the same virtual width, then clip opposite halves.
+func make_status_block(pos: Vector2, size: Vector2, is_left: bool) -> Control:
+	var area := Control.new()
+	area.position = pos
+	area.size = size
+	area.clip_contents = true
+	area.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var surface := Panel.new()
+	surface.name = "StatusSurface"
+	surface.position = Vector2.ZERO if is_left else Vector2(-size.x, 0.0)
+	surface.size = TOP_STATUS_SIZE
+	surface.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	surface.add_theme_stylebox_override("panel", UIStyles.glass_panel(67))
+	area.add_child(surface)
+	return area
 
-# The hover tint overlay for a status block: a full-size rounded panel shaped by
-# the same notch, recolored + faded in on hover (theme-aware via
-# UIStyles.fade_hover_tint) so the WHOLE block — arc included — lights up.
-func make_status_hover(size: Vector2, notch_center: Vector2, notch_radius: float) -> Panel:
+# Half hover tint has only the outer corners rounded; its center edge is square.
+func make_status_hover(size: Vector2, is_left: bool) -> Panel:
 	var overlay := Panel.new()
 	overlay.position = Vector2.ZERO
 	overlay.size = size
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.modulate.a = 0.0
-	overlay.add_theme_stylebox_override("panel", status_hover_style())
-	overlay.material = status_notch_material(notch_center, notch_radius, size, Color(0, 0, 0, 0))
+	overlay.add_theme_stylebox_override("panel", status_hover_style(is_left))
 	return overlay
 
-func status_hover_style() -> StyleBoxFlat:
+func status_hover_style(is_left: bool) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0, 0, 0)
-	UIStyles._set_radius(style, 67)
+	style.corner_radius_top_left = 67 if is_left else 0
+	style.corner_radius_bottom_left = 67 if is_left else 0
+	style.corner_radius_top_right = 0 if is_left else 67
+	style.corner_radius_bottom_right = 0 if is_left else 67
 	return style
 
 # A centered status label (LEVEL / MOVES text). It also handles taps + hover, so
@@ -671,61 +1139,11 @@ func make_status_label() -> Label:
 	UIStyles.apply_font(label, UIStyles.FONT_BOLD, 44, UIStyles.STATUSBAR_TEXT)
 	return label
 
-# Shared status shape shader material. The panel's own StyleBoxFlat draws the
-# normal glass frame; this shader clips the target notch and adds the missing arc
-# with the same border color/width. `panel_size` maps UV → pixels.
-func status_notch_material(notch_center: Vector2, notch_radius: float, panel_size: Vector2, border_color: Color) -> ShaderMaterial:
-	var mat := ShaderMaterial.new()
-	mat.shader = status_notch_shader()
-	mat.set_shader_parameter("notch_center", notch_center)
-	mat.set_shader_parameter("notch_radius", notch_radius)
-	mat.set_shader_parameter("panel_size", panel_size)
-	mat.set_shader_parameter("border_color", border_color)
-	return mat
-
-func status_notch_shader() -> Shader:
-	if _status_notch_shader == null:
-		_status_notch_shader = Shader.new()
-		_status_notch_shader.code = """
-shader_type canvas_item;
-uniform vec2 notch_center = vec2(536.0, 107.0);
-uniform float notch_radius = 150.0;
-uniform vec2 panel_size = vec2(536.0, 214.0);
-uniform vec4 border_color : source_color = vec4(0.0);
-uniform float outer_radius = 67.0;
-uniform float border_width = 3.0;
-uniform float notch_border_width = 3.6;
-
-float rounded_box_sdf(vec2 p, vec2 half_size, float radius) {
-	vec2 q = abs(p) - half_size + vec2(radius);
-	return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - radius;
-}
-
-void fragment() {
-	vec2 p = UV * panel_size;
-	float rect_d = rounded_box_sdf(p - panel_size * 0.5, panel_size * 0.5, outer_radius);
-	float notch_d = distance(p, notch_center) - notch_radius;
-	float shape_d = max(rect_d, -notch_d);
-	float alpha = 1.0 - smoothstep(-1.0, 1.0, shape_d);
-	float rect_inside = max(-rect_d, 0.0);
-	float rect_border = (1.0 - smoothstep(border_width - 1.0, border_width + 1.0, rect_inside)) * alpha;
-	float notch_border = (1.0 - smoothstep(notch_border_width - 1.0, notch_border_width + 1.0, notch_d)) * step(0.0, notch_d) * alpha;
-	notch_border *= 1.0 - rect_border * 0.82;
-	vec4 fill = vec4(COLOR.rgb, COLOR.a * alpha);
-	float border_a = notch_border * border_color.a;
-	float out_a = border_a + fill.a * (1.0 - border_a);
-	vec3 out_rgb = fill.rgb;
-	if (out_a > 0.0) {
-		out_rgb = (border_color.rgb * border_a + fill.rgb * fill.a * (1.0 - border_a)) / out_a;
-	}
-	COLOR = vec4(out_rgb, out_a);
-}
-"""
-	return _status_notch_shader
-
 func set_orbit_items(items: Array) -> void:
+	var animate_new_items := not skip_orbit_entrance_once
 	var desired_ids: Dictionary = {}
-	for item in items:
+	for i in range(items.size()):
+		var item: Dictionary = items[i] as Dictionary
 		var value: int = int(item["value"])
 		var op: String = str(item["op"])
 		var item_id: String = str(item.get("id", "%s_%d_%d" % [op, value, orbit.get_child_count()]))
@@ -743,8 +1161,12 @@ func set_orbit_items(items: Array) -> void:
 			UIStyles.add_press_animation(btn)
 			orbit.add_child(btn)
 			is_new = true
-		btn.modulate.a = 1.0
-		btn.scale = Vector2.ONE
+		if is_new and animate_new_items:
+			btn.modulate.a = 0.0
+			btn.scale = Vector2(0.3, 0.3)
+		else:
+			btn.modulate.a = 1.0
+			btn.scale = Vector2.ONE
 		btn.set_meta("popping", false)
 		btn.visible = true
 		btn.text = str(value)
@@ -763,15 +1185,37 @@ func set_orbit_items(items: Array) -> void:
 		btn.set_meta("orbit_target_angle", target_angle)
 		btn.set_meta("orbit_force_clockwise", bool(item.get("orbit_force_clockwise", false)))
 		var valid_operation := OperationLogic.can_apply(current_number_value, value, op)
+		btn.set_meta("operation_valid", valid_operation)
 		style_operation_button(btn, op, valid_operation)
-		btn.disabled = level_failed or not valid_operation
-		if is_new:
+		# A grey satellite remains clickable so it can acknowledge the tap without
+		# applying the operation. A failed level still blocks the whole orbit.
+		btn.disabled = level_failed
+		if is_new and animate_new_items:
 			btn.position = orbit_target_position(btn) - btn.size * 0.5
+			var pop_tween := btn.create_tween()
+			pop_tween.tween_interval(float(i) * 0.04)
+			pop_tween.tween_property(btn, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+			pop_tween.parallel().tween_property(btn, "modulate:a", 1.0, 0.18).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	for child in orbit.get_children():
 		var btn := child as Button
 		if btn != null and not desired_ids.has(str(btn.get_meta("id"))):
 			animate_orbit_disappear(btn)
+	skip_orbit_entrance_once = false
 	update_orbit_positions(false)
+
+func restore_orbit_without_entrance_animation() -> void:
+	skip_orbit_entrance_once = true
+
+# Тайминги исчезновения спутника при ходе. Единый источник и для анимации, и для
+# синхронизации блокировки ввода (4.3) — вместо «магической» 0.22 в Main.
+const ORBIT_DISAPPEAR_GROW := 0.07
+const ORBIT_DISAPPEAR_FADE := 0.14
+# Ввод разблокируется, когда убранный спутник практически исчез (он `disabled` сразу,
+# так что даблтап по нему невозможен), а оставшиеся уже перетекают — «доска готова».
+const ORBIT_MOVE_SETTLE_TIME := ORBIT_DISAPPEAR_FADE
+
+func orbit_move_settle_time() -> float:
+	return ORBIT_MOVE_SETTLE_TIME
 
 func animate_orbit_disappear(button: Button) -> void:
 	if button == null or button.is_queued_for_deletion():
@@ -782,9 +1226,9 @@ func animate_orbit_disappear(button: Button) -> void:
 	button.disabled = true
 	button.pivot_offset = button.size * 0.5
 	var tween := button.create_tween()
-	tween.tween_property(button, "scale", Vector2(1.16, 1.16), 0.07).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tween.tween_property(button, "scale", Vector2(0.72, 0.72), 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
-	tween.parallel().tween_property(button, "modulate:a", 0.0, 0.14).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(button, "scale", Vector2(1.16, 1.16), ORBIT_DISAPPEAR_GROW).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(button, "scale", Vector2(0.72, 0.72), ORBIT_DISAPPEAR_FADE).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	tween.parallel().tween_property(button, "modulate:a", 0.0, ORBIT_DISAPPEAR_FADE).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.finished.connect(func() -> void:
 		if button == null or button.is_queued_for_deletion():
 			return
@@ -802,26 +1246,29 @@ func find_orbit_button(item_id: String) -> Button:
 	return null
 
 func style_operation_button(button: Button, op: String, valid: bool = true) -> void:
-	# Satellite matches its operator's chip: fill = plate color, border + number =
-	# the plate's TEXT color (easier to tell apart than the old white bubbles).
+	# Satellite matches its operator's chip: fill = plate, outline = identity color,
+	# number = high-contrast semantic text color.
 	var bg: Color = UIStyles.operation_plate(op)
-	var border: Color = UIStyles.operation_text(op)
+	var border: Color = UIStyles.operation_border(op)
 	var text_color: Color = UIStyles.operation_text(op)
 	if not valid:
-		bg = UIStyles.BG.lerp(Color.WHITE, 0.03) if UIStyles.is_dark() else Color("#F1F0F5")
-		border = UIStyles.LOCKED_BORDER
+		bg = disabled_orbit_bg()
+		# At rest an unavailable move is fully neutral: outline and number share the
+		# same grey. Its operator color is revealed only by the rejected-tap flash.
+		border = UIStyles.DISABLED
 		text_color = UIStyles.DISABLED
-	var normal: StyleBoxFlat = UIStyles.card(bg, border, 94)
-	normal.border_width_left = 4
-	normal.border_width_right = 4
-	normal.border_width_top = 4
-	normal.border_width_bottom = 4
+	apply_operation_button_style(button, op, bg, border, text_color, valid)
+
+func apply_operation_button_style(button: Button, op: String, bg: Color, border: Color, text_color: Color, valid: bool) -> void:
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = bg
+	UIStyles._set_radius(normal, 94)
 	var hover: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
 	var pressed: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
 	if valid and str(button.get_meta("id", "")) == hint_highlight_item_id:
-		apply_hint_shadow(normal, op)
-		apply_hint_shadow(hover, op)
-		apply_hint_shadow(pressed, op)
+		apply_hint_shadow(normal, op, hint_highlight_strength)
+		apply_hint_shadow(hover, op, hint_highlight_strength)
+		apply_hint_shadow(pressed, op, hint_highlight_strength)
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", hover)
 	button.add_theme_stylebox_override("pressed", pressed)
@@ -831,12 +1278,44 @@ func style_operation_button(button: Button, op: String, valid: bool = true) -> v
 	button.add_theme_color_override("font_hover_color", text_color)
 	button.add_theme_color_override("font_pressed_color", text_color)
 	button.add_theme_color_override("font_disabled_color", text_color)
+	update_orbit_button_outline(button, border)
 
-func apply_hint_shadow(style: StyleBoxFlat, op: String) -> void:
+func disabled_orbit_bg() -> Color:
+	return UIStyles.BG.lerp(Color.WHITE, 0.03) if UIStyles.is_dark() else Color("#F1F0F5")
+
+func update_orbit_button_outline(button: Button, color: Color) -> void:
+	if button == null or button.is_queued_for_deletion():
+		return
+	var outline := button.get_node_or_null("OrbitButtonOutline") as OrbitButtonOutline
+	if outline == null:
+		outline = OrbitButtonOutline.new()
+		outline.name = "OrbitButtonOutline"
+		outline.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		outline.z_index = 10
+		button.add_child(outline)
+	outline.position = Vector2.ZERO
+	outline.size = button.size
+	outline.outline_color = color
+	outline.outline_width = 4.0
+	outline.queue_redraw()
+
+func apply_hint_shadow(style: StyleBoxFlat, op: String, strength: float = 1.0) -> void:
 	var shadow := UIStyles.operation_border(op)
-	shadow.a = 0.34 if UIStyles.is_dark() else 0.26
+	# Reveal strength -1→0 grows the halo from the chip's center into the regular
+	# breathing glow. 0→1 is the light pulse; 1→2 is the large reveal halo.
+	if strength < 0.0:
+		var reveal_progress := clampf(strength + 1.0, 0.0, 1.0)
+		shadow.a = (0.62 if UIStyles.is_dark() else 0.48) * UIStyles.ATTENTION_GLOW_MIN_ALPHA * reveal_progress
+		style.shadow_color = shadow
+		style.shadow_size = roundi(UIStyles.ATTENTION_GLOW_MIN_EXTENT * reveal_progress)
+		style.shadow_offset = Vector2.ZERO
+		return
+	var amount := clampf(strength, 0.0, 1.0)
+	var boost := clampf(strength - 1.0, 0.0, 1.0)
+	var alpha_factor := lerpf(UIStyles.attention_glow_alpha(amount), HINT_REPEAT_GLOW_ALPHA_FACTOR, boost)
+	shadow.a = minf(1.0, (0.62 if UIStyles.is_dark() else 0.48) * alpha_factor)
 	style.shadow_color = shadow
-	style.shadow_size = 20
+	style.shadow_size = roundi(lerpf(UIStyles.attention_glow_extent(amount), HINT_REPEAT_GLOW_EXTENT, boost))
 	style.shadow_offset = Vector2.ZERO
 
 func _on_orbit_button_pressed(button: Button) -> void:
@@ -845,13 +1324,84 @@ func _on_orbit_button_pressed(button: Button) -> void:
 	var item_id := str(button.get_meta("id", ""))
 	if item_id.is_empty():
 		return
+	var op := str(button.get_meta("op", ""))
+	if not bool(button.get_meta("operation_valid", true)):
+		play_rejected_orbit_feedback(button, op)
+		AudioManagerScript.play_orbit_rejected_haptic()
+		return
 	var tween := button.create_tween()
 	tween.tween_property(button, "scale", Vector2(0.90, 0.90), 0.055).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.tween_property(button, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	orbit_pressed.emit(int(button.get_meta("value")), str(button.get_meta("op")), str(button.get_meta("id", "")))
+	orbit_pressed.emit(int(button.get_meta("value")), op, item_id)
+
+func play_rejected_orbit_feedback(button: Button, op: String, restore_valid: bool = false) -> void:
+	if button == null or button.is_queued_for_deletion():
+		return
+	for meta_key in [&"rejected_color_tween", &"rejected_shake_tween"]:
+		if button.has_meta(meta_key):
+			var previous := button.get_meta(meta_key) as Tween
+			if previous != null and previous.is_valid():
+				previous.kill()
+	var color_tween := button.create_tween()
+	button.set_meta("rejected_color_tween", color_tween)
+	color_tween.tween_method(func(amount: float) -> void:
+		apply_rejected_orbit_flash(button, op, amount, restore_valid), 0.0, 1.0, 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	color_tween.tween_method(func(amount: float) -> void:
+		apply_rejected_orbit_flash(button, op, amount, restore_valid), 1.0, 0.0, 0.25).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	color_tween.finished.connect(func() -> void:
+		if is_instance_valid(button):
+			style_operation_button(button, op, restore_valid)
+			button.remove_meta("rejected_color_tween")
+	)
+	var shake_tween := button.create_tween()
+	button.set_meta("rejected_shake_tween", shake_tween)
+	shake_tween.tween_method(func(offset: Vector2) -> void:
+		set_rejected_orbit_offset(button, offset), Vector2.ZERO, Vector2(9.0, 0.0), 0.055).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	shake_tween.tween_method(func(offset: Vector2) -> void:
+		set_rejected_orbit_offset(button, offset), Vector2(9.0, 0.0), Vector2(-7.0, 0.0), 0.055).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	shake_tween.tween_method(func(offset: Vector2) -> void:
+		set_rejected_orbit_offset(button, offset), Vector2(-7.0, 0.0), Vector2(4.0, 0.0), 0.055).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	shake_tween.tween_method(func(offset: Vector2) -> void:
+		set_rejected_orbit_offset(button, offset), Vector2(4.0, 0.0), Vector2.ZERO, 0.08).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	shake_tween.finished.connect(func() -> void:
+		if is_instance_valid(button):
+			set_rejected_orbit_offset(button, Vector2.ZERO)
+			button.remove_meta("rejected_shake_tween")
+	)
+
+func apply_rejected_orbit_flash(button: Button, op: String, amount: float, restore_valid: bool = false) -> void:
+	if button == null or button.is_queued_for_deletion():
+		return
+	var t := clampf(amount, 0.0, 1.0)
+	var rest_bg := UIStyles.operation_plate(op) if restore_valid else disabled_orbit_bg()
+	var rest_border := UIStyles.operation_border(op) if restore_valid else UIStyles.DISABLED
+	var rest_text := UIStyles.operation_text(op) if restore_valid else UIStyles.DISABLED
+	var flash_bg := UIStyles.operation_plate(op).lerp(UIStyles.operation_border(op), 0.18)
+	apply_operation_button_style(
+		button,
+		op,
+		rest_bg.lerp(flash_bg, t),
+		rest_border.lerp(UIStyles.operation_border(op), t),
+		rest_text,
+		restore_valid
+	)
+
+func reject_tutorial_orbit(item_id: String) -> void:
+	var button := find_orbit_button(item_id)
+	if button == null:
+		return
+	var op := str(button.get_meta("op", ""))
+	play_rejected_orbit_feedback(button, op, true)
+	AudioManagerScript.play_tutorial_wrong_move_haptic()
+	show_tutorial_caution()
+
+func set_rejected_orbit_offset(button: Button, offset: Vector2) -> void:
+	if button != null and not button.is_queued_for_deletion():
+		button.set_meta("rejected_offset", offset)
 
 func reveal_hint_result(message: String, balance: int, target: Dictionary) -> void:
-	current_hint_points = balance
+	current_lumens = balance
+	update_lumens_badge(balance)
 	if hint_popup != null and hint_popup.has_method("cache_result"):
 		hint_popup.cache_result(message, balance)
 	var reveal := func() -> void:
@@ -862,6 +1412,29 @@ func reveal_hint_result(message: String, balance: int, target: Dictionary) -> vo
 		reveal.call()
 
 func highlight_hint_target(target: Dictionary) -> void:
+	if target.is_empty():
+		clear_hint_highlight()
+		return
+	var item_id := str(target.get("id", ""))
+	var button := find_orbit_button(item_id) if not item_id.is_empty() else null
+	if button == null:
+		button = find_orbit_button_by_move(str(target.get("op", "")), int(target.get("value", 0)))
+	if button == null:
+		return
+	var target_item_id := str(button.get_meta("id", ""))
+	var op := str(button.get_meta("op", target.get("op", "")))
+	var value := int(button.get_meta("value", target.get("value", 0)))
+	var valid_operation := OperationLogic.can_apply(current_number_value, value, op)
+	if target_item_id == hint_highlight_item_id:
+		pulse_existing_hint_highlight(button, op)
+		return
+	clear_hint_highlight()
+	hint_highlight_item_id = target_item_id
+	hint_highlight_strength = -1.0
+	style_operation_button(button, op, valid_operation)
+	play_hint_reveal(button, op, true)
+
+func restore_hint_highlight(target: Dictionary) -> void:
 	clear_hint_highlight()
 	if target.is_empty():
 		return
@@ -871,18 +1444,67 @@ func highlight_hint_target(target: Dictionary) -> void:
 		button = find_orbit_button_by_move(str(target.get("op", "")), int(target.get("value", 0)))
 	if button == null:
 		return
-	hint_highlight_item_id = str(button.get_meta("id", ""))
 	var op := str(button.get_meta("op", target.get("op", "")))
 	var value := int(button.get_meta("value", target.get("value", 0)))
-	var valid_operation := OperationLogic.can_apply(current_number_value, value, op)
-	style_operation_button(button, op, valid_operation)
+	if not OperationLogic.can_apply(current_number_value, value, op):
+		return
+	hint_highlight_item_id = str(button.get_meta("id", ""))
+	hint_highlight_strength = 0.0
+	style_operation_button(button, op, true)
+	start_hint_highlight_pulse(button, op)
+
+func set_hint_highlight_strength(button: Button, op: String, strength: float) -> void:
+	if button == null or button.is_queued_for_deletion():
+		return
+	hint_highlight_strength = clampf(strength, -1.0, 2.0)
+	for state in [&"normal", &"hover", &"pressed"]:
+		var style := button.get_theme_stylebox(state) as StyleBoxFlat
+		if style != null:
+			apply_hint_shadow(style, op, hint_highlight_strength)
+
+func pulse_existing_hint_highlight(button: Button, op: String) -> void:
+	play_hint_reveal(button, op, false)
+
+func play_hint_reveal(button: Button, op: String, from_center: bool) -> void:
+	if button == null or button.is_queued_for_deletion():
+		return
 	if hint_highlight_tween != null and hint_highlight_tween.is_valid():
 		hint_highlight_tween.kill()
-	button.pivot_offset = button.size * 0.5
-	button.scale = Vector2.ONE
+	var starting_strength := -1.0 if from_center else clampf(hint_highlight_strength, 0.0, 1.0)
+	set_hint_highlight_strength(button, op, starting_strength)
 	hint_highlight_tween = button.create_tween()
-	hint_highlight_tween.tween_property(button, "scale", Vector2(1.035, 1.035), 0.16).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	hint_highlight_tween.tween_property(button, "scale", Vector2.ONE, 0.20).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	if not from_center:
+		# Repeated Hint presses smoothly gather the light back into the chip before
+		# replaying the same center-out reveal instead of popping to full size.
+		hint_highlight_tween.tween_method(func(strength: float) -> void:
+			set_hint_highlight_strength(button, op, strength), starting_strength, -1.0, HINT_REVEAL_RESET).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	hint_highlight_tween.tween_method(func(strength: float) -> void:
+		set_hint_highlight_strength(button, op, strength), -1.0, 2.0, HINT_REVEAL_GROW).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	hint_highlight_tween.tween_method(func(strength: float) -> void:
+		set_hint_highlight_strength(button, op, strength), 2.0, 1.0, HINT_REVEAL_SETTLE).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	hint_highlight_tween.finished.connect(func() -> void:
+		if is_instance_valid(button) and hint_highlight_item_id == str(button.get_meta("id", "")):
+			start_hint_highlight_pulse(button, op, 1.0)
+	)
+
+func start_hint_highlight_pulse(button: Button, op: String, starting_level: float = 0.0) -> void:
+	if button == null or button.is_queued_for_deletion():
+		return
+	if hint_highlight_tween != null and hint_highlight_tween.is_valid():
+		hint_highlight_tween.kill()
+	var starts_at_peak := starting_level >= 0.5
+	set_hint_highlight_strength(button, op, 1.0 if starts_at_peak else 0.0)
+	hint_highlight_tween = button.create_tween().set_loops()
+	if starts_at_peak:
+		hint_highlight_tween.tween_method(func(strength: float) -> void:
+			set_hint_highlight_strength(button, op, strength), 1.0, 0.0, UIStyles.ATTENTION_PULSE_HALF_PERIOD).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		hint_highlight_tween.tween_method(func(strength: float) -> void:
+			set_hint_highlight_strength(button, op, strength), 0.0, 1.0, UIStyles.ATTENTION_PULSE_HALF_PERIOD).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	else:
+		hint_highlight_tween.tween_method(func(strength: float) -> void:
+			set_hint_highlight_strength(button, op, strength), 0.0, 1.0, UIStyles.ATTENTION_PULSE_HALF_PERIOD).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		hint_highlight_tween.tween_method(func(strength: float) -> void:
+			set_hint_highlight_strength(button, op, strength), 1.0, 0.0, UIStyles.ATTENTION_PULSE_HALF_PERIOD).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 func find_orbit_button_by_move(op: String, value: int) -> Button:
 	for child in orbit.get_children():
@@ -894,9 +1516,16 @@ func find_orbit_button_by_move(op: String, value: int) -> Button:
 	return null
 
 func clear_hint_highlight() -> void:
+	var previous_button := find_orbit_button(hint_highlight_item_id) if not hint_highlight_item_id.is_empty() and is_instance_valid(orbit) else null
 	if hint_highlight_tween != null and hint_highlight_tween.is_valid():
 		hint_highlight_tween.kill()
 	hint_highlight_item_id = ""
+	hint_highlight_strength = 0.0
+	hint_highlight_tween = null
+	if previous_button != null:
+		var op := str(previous_button.get_meta("op", ""))
+		var valid := bool(previous_button.get_meta("operation_valid", true))
+		style_operation_button(previous_button, op, valid)
 
 func _process(delta: float) -> void:
 	if not visible:
@@ -911,9 +1540,24 @@ func _process(delta: float) -> void:
 
 func _on_coach_showing_started() -> void:
 	stop_orbit_spin_smoothly()
+	_set_local_header_over_coach(false)
+	coach_header_mode_changed.emit(true)
+	if info_panel != null:
+		info_panel.visible = true
 
 func _on_coach_hiding_started() -> void:
 	start_orbit_spin_ramp()
+	_set_local_header_over_coach(false)
+	coach_header_mode_changed.emit(false)
+	if info_panel != null:
+		info_panel.visible = true
+
+func _set_local_header_over_coach(shown: bool) -> void:
+	for button in [back_button, settings_button]:
+		if not is_instance_valid(button):
+			continue
+		button.visible = shown
+		button.z_index = 100 if shown else 0
 
 func stop_orbit_spin_smoothly() -> void:
 	if orbit_spin_tween != null and orbit_spin_tween.is_valid():
@@ -945,7 +1589,7 @@ func update_orbit_positions(snap: bool = false) -> void:
 		var target := orbit_target_position(b) - b.size * 0.5
 		if snap:
 			b.set_meta("orbit_display_angle", float(b.get_meta("orbit_target_angle", orbit_angle_for_button(b))))
-			b.position = target
+			b.position = target + (b.get_meta("rejected_offset", Vector2.ZERO) as Vector2)
 		else:
 			var current_angle := float(b.get_meta("orbit_display_angle", orbit_angle_for_button(b)))
 			var target_angle := float(b.get_meta("orbit_target_angle", orbit_angle_for_button(b)))
@@ -960,7 +1604,7 @@ func update_orbit_positions(snap: bool = false) -> void:
 			else:
 				current_angle = current_angle + angle_difference(current_angle, target_angle) * 0.115
 			b.set_meta("orbit_display_angle", current_angle)
-			b.position = orbit_position_for_angle(current_angle) - b.size * 0.5
+			b.position = orbit_position_for_angle(current_angle) - b.size * 0.5 + (b.get_meta("rejected_offset", Vector2.ZERO) as Vector2)
 
 func orbit_target_position(button: Button) -> Vector2:
 	return orbit_position_for_angle(orbit_angle_for_button(button))
@@ -990,33 +1634,53 @@ func show_hint_popup() -> void:
 		hint_popup.show_prompt()
 
 func show_hint_result(message: String, balance: int) -> void:
-	current_hint_points = balance
+	current_lumens = balance
+	update_lumens_badge(balance)
 	if hint_popup != null:
 		hint_popup.show_result(message, balance)
 
 func show_insufficient_hint_balance(balance: int) -> void:
-	current_hint_points = balance
+	current_lumens = balance
+	update_lumens_badge(balance)
 	if hint_popup != null:
 		hint_popup.show_insufficient_balance(balance)
+
+func show_hint_prompt_after_ad(balance: int) -> void:
+	current_lumens = balance
+	update_lumens_badge(balance)
+	if hint_popup != null:
+		hint_popup.configure_state(current_moves, current_lumens, current_hint_cost)
+		hint_popup.show_prompt()
 
 func clear_hint_cache() -> void:
 	if hint_popup != null:
 		hint_popup.clear_cache()
 
 func coach_context() -> Dictionary:
-	var op_rects: Array[Rect2] = []
-	for i in range(5):
-		op_rects.append(operation_card_rect(i))
 	return {
 		"screen_center": screen_center,
+		"center_rect": Rect2(center_panel.position, center_panel.size) if center_panel != null else Rect2(screen_center - Vector2(CENTER_CIRCLE_RADIUS, CENTER_CIRCLE_RADIUS), Vector2.ONE * CENTER_CIRCLE_DIAMETER),
 		"target_rect": Rect2(target_panel.position, target_panel.size) if target_panel != null else Rect2(Vector2(540, TOP_STATUS_Y + TOP_STATUS_SIZE.y * 0.5) - TARGET_BUBBLE_SIZE * 0.5, TARGET_BUBBLE_SIZE),
+		"info_rect": Rect2(info_panel.position, info_panel.size) if info_panel != null else Rect2(Vector2(EDGE_MARGIN, INFO_LINE_Y), INFO_LINE_SIZE),
 		"orbit_valid_rects": visible_orbit_button_rects(false),
 		"orbit_invalid_rects": visible_orbit_button_rects(true),
 		"orbit_fallback_rect": Rect2(Vector2(100, 520), Vector2(880, 880)),
 		"ops_rect": Rect2(operation_legend.position, operation_legend.size),
-		"op_rects": op_rects,
-		"hint_rect": Rect2(bulbs_button.position, bulbs_button.size) if bulbs_button != null else Rect2(Vector2(70, ACTION_BUTTON_Y), Vector2(455, ACTION_BUTTON_HEIGHT))
+		"op_chip_rects": op_chip_rects(),
+		"hint_rect": Rect2(hint_button.position, hint_button.size) if hint_button != null else Rect2(Vector2(70, ACTION_BUTTON_Y), Vector2(455, ACTION_BUTTON_HEIGHT))
 	}
+
+# 5.3/5.4: прямоугольники чипов легенды по имени оператора (легенда показывает только
+# операторы уровня, без фиксированных индексов и без чипа «Недоступно»).
+func op_chip_rects() -> Dictionary:
+	var result: Dictionary = {}
+	if operation_legend == null:
+		return result
+	for op in ["add", "subtract", "multiply", "divide"]:
+		var idx: int = operation_legend.op_index(op)
+		if idx >= 0:
+			result[op] = operation_card_rect(idx)
+	return result
 
 func visible_orbit_button_rects(only_invalid: bool) -> Array[Rect2]:
 	var rects: Array[Rect2] = []
@@ -1028,12 +1692,12 @@ func visible_orbit_button_rects(only_invalid: bool) -> Array[Rect2]:
 			continue
 		if bool(btn.get_meta("popping", false)):
 			continue
-		var is_invalid := btn.disabled
+		var is_invalid := not bool(btn.get_meta("operation_valid", true))
 		if only_invalid and not is_invalid:
 			continue
 		if not only_invalid and is_invalid:
 			continue
-		rects.append(Rect2(btn.position, btn.size).grow(4))
+		rects.append(Rect2(btn.position, btn.size))
 	return rects
 
 func combined_rect(rects: Array[Rect2], fallback: Rect2) -> Rect2:

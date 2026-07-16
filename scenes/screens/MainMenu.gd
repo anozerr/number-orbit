@@ -24,8 +24,7 @@ func _on_viewport_resized() -> void:
 		build()
 
 func build() -> void:
-	for child in get_children():
-		child.queue_free()
+	Layout.clear_children_for_rebuild(self)
 
 	var col := Layout.content_column(self)
 	var button_w := col.size.x
@@ -118,8 +117,8 @@ func set_levels_enabled(enabled: bool) -> void:
 	levels_button.disabled = not enabled
 	var color := UIStyles.TEXT if enabled else UIStyles.DISABLED
 	var style := UIStyles.glass_panel() if enabled else UIStyles.locked_panel()
-	var hover := style.duplicate() as StyleBoxFlat
-	var pressed := style.duplicate() as StyleBoxFlat
+	var hover := style.duplicate() as StyleBox
+	var pressed := style.duplicate() as StyleBox
 	levels_button.add_theme_stylebox_override("normal", style)
 	levels_button.add_theme_stylebox_override("hover", hover)
 	levels_button.add_theme_stylebox_override("pressed", pressed)

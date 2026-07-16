@@ -22,6 +22,14 @@ const MUSIC_CROSSFADE_SECONDS := 5.0
 const HAPTIC_PREVIEW_MIX_RATE := 44100
 const HAPTIC_PREVIEW_GAIN_DB := -8.0
 
+# Семантические события хаптиков (маппятся на паттерны в `_pattern_for`).
+# Осознанный минимализм: НЕТ событий на валидный ход и на победу — вибро = редкий
+# сигнал «обрати внимание», а не постоянный фидбэк (см. play_level_complete / 2.1-2.2).
+#   LIGHT   — тонкое подтверждение (свитчер вибро, отказной тап по серому)
+#   WARNING — «нельзя/внимание» (неверный tutorial-ход, закрытый уровень, тупик)
+#   ERROR   — самое сильное: опасное/деструктивное действие (сброс всего прогресса)
+enum Haptic { LIGHT, WARNING, ERROR }
+
 static var current: AudioManager
 
 var music_player: AudioStreamPlayer
@@ -279,47 +287,109 @@ static func play_popup_close() -> void:
 	if current != null:
 		current.play_sfx_key("popup_close", -9.0, 0.015)
 
+# Валидный ход — БЕЗ виброотклика (осознанно): вибро зарезервировано только под
+# редкие события-алерты (тупик), чтобы не перенасыщать и не смешивать сигналы.
 static func play_orbit_select() -> void:
 	if current != null:
 		current.play_sfx_key("orbit_select", -7.0, 0.035)
+
+# Тап по недоступному (серому) спутнику — лёгкий «отказной» отклик (см. задачу 1.2).
+# Вызывается механикой серых спутников; операцию НЕ применяет.
+static func play_orbit_rejected_haptic() -> void:
+	if current != null:
+		current.emit_haptic(Haptic.LIGHT)
+
+# A valid operation that would break the tutorial's winning path is a real
+# warning, unlike tapping an unavailable grey orbit number.
+static func play_tutorial_wrong_move_haptic() -> void:
+	if current != null:
+		current.emit_haptic(Haptic.WARNING)
 
 static func play_invalid() -> void:
 	if current != null:
 		current.play_sfx_key("invalid", -7.0, 0.015)
 
+# Раскрытие подсказки — БЕЗ вибро (осознанно): потенциальный конфликт с рекламой
+# (rewarded-подсказка). Остаётся только звук.
 static func play_hint_reveal() -> void:
 	if current != null:
 		current.play_sfx_key("hint_reveal", -7.0, 0.01)
-		current.trigger_haptic(18, 0.28)
 
+# Победа — БЕЗ виброотклика (осознанно): вибро = сигнал «обрати внимание» (тупик →
+# Рестарт). Если бы победа вибрировала, её финальный тап + вибро дали бы «кашу» и
+# путались бы с сигналом провала. Праздник несут звук + конфетти + анимация центра.
 static func play_level_complete() -> void:
 	if current != null:
 		current.play_sfx_key("level_complete", -5.5, 0.0)
-		current.trigger_haptic(30, 0.34)
 
 static func play_no_valid_moves_haptic() -> void:
 	if current != null:
-		current.trigger_haptic(36, 0.62)
+		current.emit_haptic(Haptic.WARNING)
 
 static func play_locked_level_haptic() -> void:
 	if current != null:
-		current.trigger_haptic(24, 0.45)
+		current.emit_haptic(Haptic.WARNING)
 
 static func play_reset_progress_haptic() -> void:
 	if current != null:
-		current.trigger_haptic(28, 0.48)
+		current.emit_haptic(Haptic.ERROR)
 
 static func confirm_haptics_enabled() -> void:
 	if current != null:
-		current.trigger_haptic(18, 0.35)
+		current.emit_haptic(Haptic.LIGHT)
 
-func trigger_haptic(duration_ms: int, amplitude: float) -> void:
+# ============================================================================
+# Хаптики: семантические события + по-платформенные бэкенды.
+#   iOS → нативный Taptic Engine (задача 2.3, сейчас заглушка) → иначе паттерн-вибро.
+#   Android/Web → Input.vibrate_handheld. Desktop → синтез-превью (play_haptic_preview).
+# Значения длительностей/амплитуд собраны в одном месте (`_pattern_for`).
+# ============================================================================
+
+func emit_haptic(event: Haptic) -> void:
 	if DisplayServer.get_name() == "headless" or not haptics_enabled:
 		return
+	if _try_native_haptic(event):
+		return
+	_play_pattern(_pattern_for(event))
+
+# Паттерн = массив «пульсов»; шаг = {delay: пауза перед пульсом (с), ms, amp}.
+func _pattern_for(event: Haptic) -> Array:
+	match event:
+		Haptic.LIGHT:
+			# Тонкий подтверждающий тик: вкл. свитчер вибро, отказной тап по серому.
+			return [{"delay": 0.0, "ms": 18, "amp": 0.30}]
+		Haptic.WARNING:
+			# «Нельзя/внимание»: неверный tutorial-ход, закрытый уровень или тупик.
+			return [{"delay": 0.0, "ms": 26, "amp": 0.48}]
+		Haptic.ERROR:
+			# Самое сильное — опасное/деструктивное действие (сброс всего прогресса).
+			# Самый заметный одиночный импульс, сильнее всех остальных сигналов.
+			return [{"delay": 0.0, "ms": 36, "amp": 0.62}]
+	return []
+
+func _play_pattern(pattern: Array) -> void:
+	for raw_step in pattern:
+		var step: Dictionary = raw_step as Dictionary
+		var delay := float(step.get("delay", 0.0))
+		if delay > 0.0:
+			var tree := get_tree()
+			if tree == null:
+				return
+			await tree.create_timer(delay).timeout
+			if not is_inside_tree() or not haptics_enabled:
+				return
+		_pulse(int(step.get("ms", 16)), float(step.get("amp", 0.4)))
+
+func _pulse(duration_ms: int, amplitude: float) -> void:
 	if OS.has_feature("mobile"):
 		Input.vibrate_handheld(duration_ms, amplitude)
 	else:
 		play_haptic_preview(duration_ms, amplitude)
+
+# Задача 2.3: когда подключён нативный iOS-плагин Taptic Engine — проиграть событие
+# через него и вернуть true. Пока плагина нет — false, используется паттерн-вибро.
+func _try_native_haptic(_event: Haptic) -> bool:
+	return false
 
 # Temporary desktop stand-in for handheld vibration. Streams are generated at
 # the requested duration, cached, and never shipped as separate audio assets.

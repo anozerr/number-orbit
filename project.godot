@@ -14,15 +14,20 @@ config/name="NumberOrbit"
 run/main_scene="res://scenes/main/Main.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 boot_splash/show_image=false
-config/icon="res://icon.svg"
+config/icon="res://number-orbit-icon-light-solid.svg"
 
 [display]
 
 window/size/viewport_width=1206
 window/size/viewport_height=2622
+window/size/mode=1
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation=1
+
+[gui]
+
+common/snap_controls_to_pixels=false
 
 [physics]
 
@@ -30,5 +35,6 @@ window/handheld/orientation=1
 
 [rendering]
 
+textures/canvas_textures/default_texture_filter=2
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="mobile"

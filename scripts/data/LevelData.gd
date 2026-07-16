@@ -1,110 +1,106 @@
 class_name LevelData
 extends RefCounted
 
-const LEVELS_PER_DIFFICULTY := 15
-const DIFFICULTIES := ["Easy", "Medium", "Hard"]
-const LEVEL_COUNT := LEVELS_PER_DIFFICULTY * 3
+# The map keeps its full 100-level structure. Levels 1–13 are hand-authored;
+# levels 14–100 are openable placeholders until their puzzles are designed.
+const DIFFICULTIES := ["Easy", "Medium", "Hard", "Extreme", "Impossible"]
+const DIFFICULTY_COUNTS := [30, 30, 30, 9, 1]
+const LEVEL_COUNT := 100
+const PLAYABLE_LEVEL_COUNT := 100
 const ALL_OPS := ["add", "subtract", "multiply", "divide"]
+const STAR_MODE_ALWAYS_THREE := "always_three"
+const STAR_MODE_TIERED := "tiered"
+const STAR_MODE_TUTORIAL := "tutorial"
+const VALID_STAR_MODES := [
+	STAR_MODE_ALWAYS_THREE,
+	STAR_MODE_TIERED,
+	STAR_MODE_TUTORIAL,
+]
 
 static func get_levels() -> Array:
+	# The hand-authored chapter plus openable placeholders through level 100.
+	return _prepare_levels(GeneratedLevels.levels())
+
+static func _prepare_levels(raw_levels: Array) -> Array:
 	var levels: Array = []
-	levels.append_array(easy_levels())
-	levels.append_array(medium_levels())
-	levels.append_array(hard_levels())
-	for i in range(levels.size()):
-		var data: Dictionary = (levels[i] as Dictionary).duplicate(true)
+	for i in range(raw_levels.size()):
+		var data: Dictionary = (raw_levels[i] as Dictionary).duplicate(true)
+		if not _has_explicit_star_contract(data):
+			push_error("L%d lacks an explicit star_mode/star_bands contract" % (i + 1))
+			return []
 		data["global_index"] = i + 1
-		data["id"] = level_id(str(data.get("difficulty", "level")), int(data.get("local_index", i + 1)))
-		levels[i] = data
+		data["id"] = level_id(
+			str(data.get("difficulty", "level")),
+			int(data.get("local_index", i + 1)),
+		)
+		levels.append(data)
 	return levels
 
-static func easy_levels() -> Array:
-	return levels_from_specs("Easy", [
-		spec(10, [2, 2, 2], items([4, "add"], [5, "add"]), items([8, "add"])),
-		spec(31, [2, 2, 2], items([6, "subtract"], [5, "subtract"]), items([4, "subtract"])),
-		spec(5, [3, 3, 3], items([3, "add"], [4, "add"], [6, "add"]), items([2, "add"])),
-		spec(3, [2, 2, 2], items([4, "multiply"], [2, "multiply"]), items([5, "multiply"])),
-		spec(40, [3, 3, 3], items([8, "subtract"], [6, "subtract"], [5, "subtract"]), items([2, "subtract"], [3, "subtract"])),
-		spec(72, [2, 2, 2], items([3, "divide"], [4, "divide"]), items([6, "divide"])),
-		spec(2, [3, 3, 3], items([3, "multiply"], [4, "multiply"], [2, "multiply"]), items([5, "multiply"])),
-		spec(240, [3, 3, 3], items([5, "divide"], [4, "divide"], [3, "divide"]), items([2, "divide"], [8, "divide"])),
-		spec(8, [3, 3, 3], items([6, "add"], [3, "add"], [4, "subtract"]), items([8, "add"], [10, "add"], [7, "subtract"])),
-		spec(20, [4, 4, 4], items([7, "add"], [5, "subtract"], [8, "add"], [4, "subtract"]), items([5, "add"], [3, "subtract"])),
-		spec(14, [3, 3, 3], items([4, "subtract"], [3, "multiply"], [5, "subtract"]), items([6, "subtract"], [2, "multiply"])),
-		spec(10, [3, 3, 3], items([2, "add"], [2, "divide"], [5, "add"]), items([3, "add"], [4, "add"], [3, "divide"])),
-		spec(2, [3, 3, 3], items([2, "multiply"], [2, "add"], [4, "add"]), items([5, "add"], [6, "multiply"], [7, "multiply"])),
-		spec(36, [3, 3, 3], items([8, "subtract"], [4, "divide"], [5, "subtract"]), items([6, "subtract"], [6, "divide"])),
-		spec(30, [3, 3, 3], items([3, "multiply"], [5, "divide"], [2, "divide"]), items([2, "multiply"], [3, "divide"]))
-	])
-
-static func medium_levels() -> Array:
-	return generated_progression_levels("Medium", 16)
-
-static func hard_levels() -> Array:
-	return generated_progression_levels("Hard", 31)
+static func _has_explicit_star_contract(data: Dictionary) -> bool:
+	var mode := str(data.get("star_mode", ""))
+	return mode in VALID_STAR_MODES and data.get("star_bands", null) is Array
 
 static func get_tutorial_levels() -> Array:
 	var steps: Array = [
 		tutorial_step(
-			"tutorial_add", "TUTORIAL: ADD", 1, [2, 3, 4], ["add"],
+			"tutorial_add", "TUTORIAL: ADD", 1, ["add"],
 			items([4, "add"], [5, "add"]), items([2, "add"]),
 			"Tap green numbers — they add up.",
 			"Keep adding up to the target.",
 			[
 				{"area": "center", "key": "coach.add.center", "text": "This purple circle is your center number. Every tap changes it."},
-				{"area": "target", "key": "coach.add.target", "text": "TARGET is the exact number to reach."},
+				{"area": "target", "key": "coach.add.target", "text": "Target is the exact number to reach."},
 				{"area": "orbit_buttons", "key": "coach.add.orbit", "text": "These green circles are your moves. Tap one to use it, then it disappears."},
 				{"area": "op_add", "key": "coach.add.op", "text": "Green means Add — it increases the center number."}
 			],
 			"Excellent. Now let's talk about taking numbers away."
 		),
 		tutorial_step(
-			"tutorial_subtract", "TUTORIAL: SUBTRACT", 9, [2, 3, 4], ["subtract"],
+			"tutorial_subtract", "TUTORIAL: SUBTRACT", 9, ["subtract"],
 			items([2, "subtract"], [4, "subtract"]), items([8, "subtract"]),
-			"Orange numbers subtract from center.",
+			"Red numbers subtract from center.",
 			"Grey means it would drop below 1.",
 			[
-				{"area": "op_subtract", "key": "coach.subtract.op", "text": "Orange means Subtract — it moves the center down."},
-				{"area": "orbit_buttons", "key": "coach.subtract.orbit", "text": "Pick the orange numbers in the right order. A too-large subtract can turn grey."}
+				{"area": "op_subtract", "key": "coach.subtract.op", "text": "Red means Subtract — it moves the center down."},
+				{"area": "orbit_buttons", "key": "coach.subtract.orbit", "text": "Pick the red numbers in the right order. A too-large subtract can turn grey."}
 			],
 			"Good. Sometimes it's faster to make the number bigger first.",
 			{
 				1: {"steps": [
-					{"area": "invalid_orbit", "key": "coach.subtract.grey", "text": "Grey circles are unavailable now — they would push the center below 1."},
-					{"area": "op_unavailable", "key": "coach.subtract.grey2", "text": "Grey always means this move can't be used right now."}
+					{"area": "invalid_orbit", "key": "coach.subtract.grey", "text": "Grey circles are unavailable now — they would push the center below 1."}
 				]}
 			}
 		),
 		tutorial_step(
-			"tutorial_multiply", "TUTORIAL: MULTIPLY", 2, [2, 3, 4], ["multiply"],
+			"tutorial_multiply", "TUTORIAL: MULTIPLY", 2, ["multiply"],
 			items([3, "multiply"], [4, "multiply"]), items([5, "multiply"]),
-			"Red numbers multiply the center.",
+			"Blue numbers multiply the center.",
 			"Choose the multiplier that reaches the target.",
 			[
-				{"area": "op_multiply", "key": "coach.multiply.op", "text": "Red means Multiply — a small number can grow fast."},
+				{"area": "op_multiply", "key": "coach.multiply.op", "text": "Blue means Multiply — a small number can grow fast."},
 				{"area": "orbit_buttons", "key": "coach.multiply.orbit", "text": "Multiply carefully: one wrong tap can overshoot the target."}
 			],
 			"Great. Next: division only works when it divides evenly."
 		),
 		tutorial_step(
-			"tutorial_divide", "TUTORIAL: DIVIDE", 48, [2, 3, 4], ["divide"],
+			"tutorial_divide", "TUTORIAL: DIVIDE", 48, ["divide"],
 			items([3, "divide"], [4, "divide"]), items([6, "divide"], [8, "divide"]),
-			"Blue divides — only when exact.",
+			"Orange divides — only when exact.",
 			"Grey won't divide evenly right now.",
 			[
-				{"area": "op_divide", "key": "coach.divide.op", "text": "Blue means Divide — it works only when the division is exact."},
-				{"area": "orbit_buttons", "key": "coach.divide.orbit", "text": "Blue numbers are available only while they divide the center exactly."}
+				{"area": "op_divide", "key": "coach.divide.op", "text": "Orange means Divide — it works only when the division is exact."},
+				{"area": "orbit_buttons", "key": "coach.divide.orbit", "text": "Orange numbers are available only while they divide the center exactly."}
 			],
 			"Perfect. One last idea: the right numbers can still fail in the wrong order.",
 			{
 				1: {"steps": [
-					{"area": "invalid_orbit", "key": "coach.divide.grey", "text": "This blue number is grey now because it won't divide evenly."}
+					{"area": "invalid_orbit", "key": "coach.divide.grey", "text": "This orange number is grey now because it won't divide evenly."}
 				]}
 			}
 		),
 		tutorial_step(
-			"tutorial_order", "TUTORIAL: ORDER", 8, [2, 3, 4], ALL_OPS,
-			items([3, "multiply"], [6, "subtract"]), items([5, "add"], [2, "divide"]),
+			"tutorial_order", "TUTORIAL: ORDER", 6, ALL_OPS,
+			items([2, "divide"], [5, "add"], [3, "multiply"], [4, "subtract"]), [],
 			"Order matters — plan each move.",
 			"Watch the center, choose wisely.",
 			[
@@ -120,10 +116,12 @@ static func get_tutorial_levels() -> Array:
 		steps[i] = data
 	return steps
 
-static func tutorial_step(id: String, title: String, start: int, thresholds: Array, allowed_ops: Array, solution: Array, distractors: Array, help_start: String, help_after: String, coach_steps: Array, complete_teaser: String, coach_after_moves: Dictionary = {}) -> Dictionary:
+static func tutorial_step(id: String, title: String, start: int, allowed_ops: Array, solution: Array, distractors: Array, help_start: String, help_after: String, coach_steps: Array, complete_teaser: String, coach_after_moves: Dictionary = {}) -> Dictionary:
 	var target: int = apply_item_sequence(start, solution)
 	var all_items: Array = interleave_items(solution, distractors)
-	var data: Dictionary = level(start, start, target, thresholds, allowed_ops, [all_items])
+	var data: Dictionary = level(start, target, allowed_ops, [all_items])
+	data["star_mode"] = STAR_MODE_TUTORIAL
+	data["star_bands"] = []
 	data["id"] = id
 	data["title"] = title
 	data["help_start"] = help_start
@@ -131,120 +129,6 @@ static func tutorial_step(id: String, title: String, start: int, thresholds: Arr
 	data["coach"] = {"steps": coach_steps}
 	data["coach_after_moves"] = coach_after_moves
 	data["complete_teaser"] = complete_teaser
-	data["sequence"] = solution
-	return data
-
-static func levels_from_specs(difficulty: String, specs: Array) -> Array:
-	var result: Array = []
-	for i in range(specs.size()):
-		var data: Dictionary = spec_to_level(specs[i] as Dictionary, difficulty, i + 1)
-		result.append(data)
-	return result
-
-static func generated_progression_levels(difficulty: String, first_global_level: int) -> Array:
-	var result: Array = []
-	for offset in range(15):
-		var global_level := first_global_level + offset
-		var local_index := offset + 1
-		var solution_length := progression_solution_length(global_level)
-		var item_count := progression_item_count(global_level)
-		result.append(generated_progression_level(difficulty, local_index, global_level, solution_length, item_count))
-	return result
-
-static func progression_solution_length(global_level: int) -> int:
-	if global_level <= 20:
-		return 4
-	if global_level <= 25:
-		return 5
-	if global_level <= 30:
-		return 6
-	if global_level <= 35:
-		return 7
-	if global_level <= 40:
-		return 8
-	return 9
-
-static func progression_item_count(global_level: int) -> int:
-	if global_level <= 20:
-		return 7
-	if global_level <= 25:
-		return 8
-	if global_level <= 30:
-		return 9
-	if global_level <= 35:
-		return 10
-	if global_level <= 40:
-		return 11
-	return 12
-
-static func generated_progression_level(difficulty: String, local_index: int, global_level: int, solution_length: int, item_count: int) -> Dictionary:
-	var template := progression_template(global_level)
-	var start := int(template["start"])
-	var solution: Array = template["solution"] as Array
-	var target := apply_item_sequence(start, solution)
-	var all_items: Array = template["items"] as Array
-	var thresholds := [solution_length, solution_length + 1, solution_length + 2]
-	var data := level(start, start, target, thresholds, ops_from_items(all_items), [all_items])
-	data["difficulty"] = difficulty
-	data["local_index"] = local_index
-	data["solution_length"] = solution_length
-	data["sequence"] = solution
-	data["star_bands"] = [
-		{"stars": 3, "moves": thresholds[0]},
-		{"stars": 2, "moves": thresholds[1]},
-		{"stars": 1, "moves": thresholds[2]}
-	]
-	return data
-
-static func progression_template(global_level: int) -> Dictionary:
-	var raw_templates := {
-		16: {"start": 16, "items": [[8, "add"], [40, "add"], [2, "divide"], [8, "divide"], [8, "multiply"], [4, "subtract"], [5, "multiply"]], "solution": [[8, "multiply"], [2, "divide"], [8, "add"], [40, "add"]]},
-		17: {"start": 76, "items": [[32, "subtract"], [17, "add"], [2, "divide"], [5, "subtract"], [7, "multiply"], [44, "add"], [13, "add"]], "solution": [[13, "add"], [17, "add"], [44, "add"], [5, "subtract"]]},
-		18: {"start": 181, "items": [[41, "subtract"], [4, "add"], [9, "subtract"], [12, "divide"], [5, "subtract"], [9, "multiply"], [16, "add"]], "solution": [[41, "subtract"], [16, "add"], [9, "subtract"], [5, "subtract"]]},
-		19: {"start": 214, "items": [[2, "divide"], [29, "subtract"], [20, "add"], [4, "multiply"], [30, "subtract"], [35, "add"], [50, "subtract"]], "solution": [[29, "subtract"], [20, "add"], [35, "add"], [30, "subtract"]]},
-		20: {"start": 196, "items": [[30, "add"], [15, "subtract"], [43, "add"], [2, "multiply"], [4, "divide"], [20, "subtract"], [3, "multiply"]], "solution": [[20, "subtract"], [43, "add"], [15, "subtract"], [30, "add"]]},
-		21: {"start": 40, "items": [[7, "add"], [16, "add"], [9, "multiply"], [3, "divide"], [10, "divide"], [22, "add"], [16, "subtract"], [14, "subtract"]], "solution": [[16, "add"], [7, "add"], [3, "divide"], [9, "multiply"], [22, "add"]]},
-		22: {"start": 23, "items": [[8, "multiply"], [19, "multiply"], [2, "subtract"], [26, "add"], [23, "divide"], [17, "subtract"], [16, "subtract"], [22, "add"]], "solution": [[22, "add"], [8, "multiply"], [17, "subtract"], [2, "subtract"], [16, "subtract"]]},
-		23: {"start": 15, "items": [[34, "add"], [3, "divide"], [8, "multiply"], [2, "subtract"], [15, "divide"], [6, "multiply"], [5, "multiply"], [32, "add"]], "solution": [[3, "divide"], [34, "add"], [2, "subtract"], [32, "add"], [6, "multiply"]]},
-		24: {"start": 182, "items": [[12, "add"], [16, "add"], [33, "add"], [3, "multiply"], [2, "divide"], [17, "subtract"], [31, "subtract"], [2, "multiply"]], "solution": [[31, "subtract"], [2, "multiply"], [16, "add"], [12, "add"], [17, "subtract"]]},
-		25: {"start": 142, "items": [[12, "divide"], [3, "divide"], [3, "multiply"], [24, "subtract"], [6, "add"], [24, "add"], [5, "multiply"], [2, "divide"]], "solution": [[5, "multiply"], [3, "multiply"], [6, "add"], [2, "divide"], [3, "divide"]]},
-		26: {"start": 27, "items": [[19, "add"], [2, "add"], [3, "multiply"], [16, "subtract"], [3, "divide"], [5, "add"], [3, "subtract"], [11, "subtract"], [6, "multiply"]], "solution": [[5, "add"], [6, "multiply"], [3, "divide"], [19, "add"], [3, "multiply"], [11, "subtract"]]},
-		27: {"start": 80, "items": [[6, "multiply"], [17, "add"], [44, "subtract"], [2, "divide"], [5, "multiply"], [29, "subtract"], [4, "divide"], [22, "add"], [2, "multiply"]], "solution": [[29, "subtract"], [44, "subtract"], [6, "multiply"], [5, "multiply"], [2, "multiply"], [22, "add"]]},
-		28: {"start": 87, "items": [[3, "divide"], [11, "subtract"], [20, "subtract"], [5, "multiply"], [42, "add"], [6, "multiply"], [29, "divide"], [38, "add"], [45, "subtract"]], "solution": [[5, "multiply"], [45, "subtract"], [11, "subtract"], [20, "subtract"], [38, "add"], [42, "add"]]},
-		29: {"start": 100, "items": [[4, "divide"], [35, "subtract"], [20, "add"], [5, "multiply"], [5, "divide"], [7, "multiply"], [24, "subtract"], [26, "add"], [44, "add"]], "solution": [[5, "divide"], [20, "add"], [44, "add"], [5, "multiply"], [26, "add"], [35, "subtract"]]},
-		30: {"start": 29, "items": [[56, "multiply"], [61, "divide"], [31, "add"], [4, "multiply"], [35, "add"], [3, "multiply"], [18, "add"], [38, "subtract"], [38, "add"]], "solution": [[4, "multiply"], [3, "multiply"], [18, "add"], [31, "add"], [38, "add"], [35, "add"]]},
-		31: {"start": 346, "items": [[9, "multiply"], [35, "add"], [40, "subtract"], [2, "divide"], [8, "add"], [34, "subtract"], [12, "divide"], [33, "subtract"], [12, "add"], [6, "multiply"]], "solution": [[40, "subtract"], [34, "subtract"], [6, "multiply"], [8, "add"], [2, "divide"], [9, "multiply"], [12, "divide"]]},
-		32: {"start": 346, "items": [[3, "divide"], [9, "multiply"], [33, "subtract"], [7, "multiply"], [53, "divide"], [3, "subtract"], [5, "multiply"], [39, "subtract"], [30, "subtract"], [41, "add"]], "solution": [[30, "subtract"], [39, "subtract"], [41, "add"], [7, "multiply"], [3, "divide"], [33, "subtract"], [3, "subtract"]]},
-		33: {"start": 77, "items": [[9, "multiply"], [21, "add"], [5, "multiply"], [27, "subtract"], [32, "subtract"], [9, "divide"], [45, "subtract"], [7, "divide"], [15, "add"], [18, "subtract"]], "solution": [[15, "add"], [9, "multiply"], [32, "subtract"], [18, "subtract"], [45, "subtract"], [27, "subtract"], [21, "add"]]},
-		34: {"start": 352, "items": [[11, "divide"], [31, "subtract"], [9, "multiply"], [17, "add"], [8, "divide"], [21, "add"], [4, "subtract"], [36, "add"], [5, "multiply"], [43, "add"]], "solution": [[31, "subtract"], [17, "add"], [36, "add"], [11, "divide"], [43, "add"], [21, "add"], [9, "multiply"]]},
-		35: {"start": 242, "items": [[2, "divide"], [29, "subtract"], [27, "add"], [3, "multiply"], [9, "add"], [22, "subtract"], [6, "multiply"], [5, "multiply"], [12, "divide"], [31, "subtract"]], "solution": [[6, "multiply"], [5, "multiply"], [31, "subtract"], [27, "add"], [3, "multiply"], [12, "divide"], [2, "divide"]]},
-		36: {"start": 287, "items": [[6, "multiply"], [7, "multiply"], [38, "add"], [36, "add"], [8, "multiply"], [29, "subtract"], [44, "subtract"], [35, "add"], [9, "divide"], [37, "add"], [27, "add"]], "solution": [[38, "add"], [35, "add"], [9, "divide"], [27, "add"], [37, "add"], [36, "add"], [7, "multiply"], [44, "subtract"]]},
-		37: {"start": 151, "items": [[7, "multiply"], [6, "subtract"], [32, "add"], [13, "divide"], [2, "multiply"], [10, "divide"], [9, "add"], [4, "divide"], [29, "add"], [4, "subtract"], [25, "add"]], "solution": [[9, "add"], [4, "divide"], [25, "add"], [7, "multiply"], [2, "multiply"], [32, "add"], [29, "add"], [4, "subtract"]]},
-		38: {"start": 231, "items": [[12, "subtract"], [3, "subtract"], [8, "divide"], [19, "add"], [2, "add"], [8, "multiply"], [10, "add"], [13, "subtract"], [34, "subtract"], [3, "multiply"], [45, "subtract"]], "solution": [[45, "subtract"], [34, "subtract"], [8, "divide"], [19, "add"], [8, "multiply"], [2, "add"], [3, "multiply"], [12, "subtract"]]},
-		39: {"start": 211, "items": [[3, "multiply"], [7, "divide"], [20, "subtract"], [40, "add"], [12, "add"], [9, "subtract"], [16, "add"], [2, "add"], [9, "multiply"], [19, "divide"], [15, "add"]], "solution": [[40, "add"], [15, "add"], [7, "divide"], [9, "multiply"], [3, "multiply"], [9, "subtract"], [20, "subtract"], [12, "add"]]},
-		40: {"start": 239, "items": [[3, "multiply"], [7, "divide"], [20, "subtract"], [40, "add"], [12, "add"], [9, "subtract"], [16, "add"], [2, "add"], [9, "multiply"], [17, "divide"], [15, "add"]], "solution": [[40, "add"], [15, "add"], [7, "divide"], [9, "multiply"], [3, "multiply"], [9, "subtract"], [20, "subtract"], [12, "add"]]},
-		41: {"start": 338, "items": [[36, "subtract"], [45, "add"], [28, "add"], [8, "divide"], [37, "subtract"], [2, "multiply"], [15, "add"], [25, "subtract"], [5, "multiply"], [2, "add"], [2, "subtract"], [10, "divide"]], "solution": [[25, "subtract"], [15, "add"], [8, "divide"], [28, "add"], [45, "add"], [2, "multiply"], [5, "multiply"], [37, "subtract"], [36, "subtract"]]},
-		42: {"start": 48, "items": [[5, "multiply"], [23, "add"], [15, "subtract"], [8, "divide"], [8, "add"], [36, "add"], [27, "add"], [42, "add"], [11, "add"], [13, "add"], [33, "add"], [25, "subtract"]], "solution": [[36, "add"], [13, "add"], [33, "add"], [42, "add"], [11, "add"], [23, "add"], [5, "multiply"], [27, "add"], [8, "add"]]},
-		43: {"start": 117, "items": [[18, "subtract"], [13, "add"], [27, "subtract"], [21, "subtract"], [27, "add"], [4, "multiply"], [4, "divide"], [25, "subtract"], [9, "multiply"], [16, "add"], [36, "add"], [7, "divide"]], "solution": [[36, "add"], [16, "add"], [4, "multiply"], [27, "add"], [13, "add"], [9, "multiply"], [25, "subtract"], [27, "subtract"], [4, "divide"]]},
-		44: {"start": 219, "items": [[10, "divide"], [16, "add"], [39, "add"], [22, "subtract"], [11, "add"], [4, "multiply"], [45, "add"], [21, "add"], [3, "multiply"], [2, "add"], [2, "subtract"], [6, "divide"]], "solution": [[11, "add"], [10, "divide"], [16, "add"], [45, "add"], [21, "add"], [39, "add"], [3, "multiply"], [22, "subtract"], [4, "multiply"]]},
-		45: {"start": 380, "items": [[4, "add"], [27, "add"], [22, "subtract"], [26, "subtract"], [2, "subtract"], [7, "multiply"], [19, "subtract"], [8, "divide"], [41, "add"], [30, "add"], [3, "divide"], [32, "add"]], "solution": [[2, "subtract"], [27, "add"], [3, "divide"], [41, "add"], [30, "add"], [7, "multiply"], [4, "add"], [19, "subtract"], [32, "add"]]}
-	}
-	var raw: Dictionary = raw_templates[global_level] as Dictionary
-	return {"start": int(raw["start"]), "items": item_list(raw["items"] as Array), "solution": item_list(raw["solution"] as Array)}
-
-static func spec(start: int, thresholds: Array, solution: Array, distractors: Array) -> Dictionary:
-	return {"start": start, "thresholds": thresholds, "solution": solution, "distractors": distractors}
-
-static func spec_to_level(raw: Dictionary, difficulty: String, local_index: int) -> Dictionary:
-	var solution: Array = raw["solution"] as Array
-	var distractors: Array = raw["distractors"] as Array
-	var target: int = apply_item_sequence(int(raw["start"]), solution)
-	var all_items: Array = interleave_items(solution, distractors)
-	var thresholds: Array = raw["thresholds"] as Array
-	var data: Dictionary = level(int(raw["start"]), int(raw["start"]), target, thresholds, ops_from_items(all_items), [all_items])
-	data["difficulty"] = difficulty
-	data["local_index"] = local_index
-	data["solution_length"] = solution.size()
 	data["sequence"] = solution
 	return data
 
@@ -266,26 +150,15 @@ static func interleave_items(solution: Array, distractors: Array) -> Array:
 		used += 1
 	return result
 
-static func level(start: int, original_start: int, target: int, thresholds: Array, allowed_ops: Array, turns: Array) -> Dictionary:
+static func level(start: int, target: int, allowed_ops: Array, turns: Array) -> Dictionary:
 	return {
 		"start": start,
-		"original_start": original_start,
+		"original_start": start,
 		"target": target,
-		"thresholds": thresholds,
 		"allowed_ops": allowed_ops,
 		"turns": turns,
 		"sequence": turns[0]
 	}
-
-static func ops_from_items(level_items: Array) -> Array:
-	var result: Array = []
-	for op in ALL_OPS:
-		for raw_item in level_items:
-			var step: Dictionary = raw_item as Dictionary
-			if str(step["op"]) == op:
-				result.append(op)
-				break
-	return result
 
 static func apply_item_sequence(start: int, sequence: Array) -> int:
 	var current: int = start
@@ -295,10 +168,28 @@ static func apply_item_sequence(start: int, sequence: Array) -> int:
 	return current
 
 static func difficulty_index_for_level(level_number: int) -> int:
-	return int(clamp(int(float(level_number - 1) / float(LEVELS_PER_DIFFICULTY)), 0, DIFFICULTIES.size() - 1))
+	var cumulative: int = 0
+	for i in range(DIFFICULTIES.size()):
+		cumulative += int(DIFFICULTY_COUNTS[i])
+		if level_number <= cumulative:
+			return i
+	return DIFFICULTIES.size() - 1
 
 static func local_level_number(level_number: int) -> int:
-	return int(posmod(level_number - 1, LEVELS_PER_DIFFICULTY)) + 1
+	var index: int = difficulty_index_for_level(level_number)
+	return level_number - difficulty_start_offset(index)
+
+# Count of all levels in the bands before `index` (its first global level - 1).
+static func difficulty_start_offset(index: int) -> int:
+	var offset: int = 0
+	for i in range(int(clamp(index, 0, DIFFICULTIES.size()))):
+		offset += int(DIFFICULTY_COUNTS[i])
+	return offset
+
+static func difficulty_level_count(index: int) -> int:
+	if index >= 0 and index < DIFFICULTY_COUNTS.size():
+		return int(DIFFICULTY_COUNTS[index])
+	return 0
 
 static func level_id(difficulty: String, local_index: int) -> String:
 	return "%s_%03d" % [difficulty.to_lower(), local_index]
@@ -312,9 +203,3 @@ static func items(a: Array, b: Array = [], c: Array = [], d: Array = [], e: Arra
 
 static func item(raw: Array) -> Dictionary:
 	return {"value": int(raw[0]), "op": str(raw[1])}
-
-static func item_list(raw_items: Array) -> Array:
-	var result: Array = []
-	for raw in raw_items:
-		result.append(item(raw as Array))
-	return result
