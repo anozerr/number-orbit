@@ -76,8 +76,6 @@ const HINT_REVEAL_GROW := 0.48
 const HINT_REVEAL_SETTLE := 0.42
 const ACTION_BUTTON_Y := 1518.0
 const ACTION_BUTTON_HEIGHT := 174.0
-const TUTORIAL_CAUTION_WIDTH := 1072.0
-const TUTORIAL_CAUTION_HEIGHT := 174.0
 const LEGEND_Y := 1626.0
 const CENTER_CIRCLE_DIAMETER := 335
 const CENTER_CIRCLE_RADIUS := CENTER_CIRCLE_DIAMETER * 0.5
@@ -102,9 +100,6 @@ var moves_count_label: Label
 var hint_button: Button
 var hint_dim: Panel
 var hint_label: Label
-var tutorial_caution_panel: Button
-var tutorial_caution_label: Label
-var tutorial_caution_tween: Tween
 var lumens_badge: Panel
 var lumens_badge_border: Control
 var lumens_badge_icon: Control
@@ -200,22 +195,13 @@ func _apply_layout() -> void:
 	operation_legend.position = Vector2(center_x - legend_w * 0.5, legend_y)
 
 	var action_y := legend_y - 54.0 - ACTION_BUTTON_HEIGHT
-	if tutorial_caution_panel != null:
-		# Occupy exactly the same full row as Hint + Restart in regular levels.
-		tutorial_caution_panel.size = Vector2(TUTORIAL_CAUTION_WIDTH, TUTORIAL_CAUTION_HEIGHT)
-		tutorial_caution_panel.position = Vector2(status_x, action_y)
-		tutorial_caution_panel.pivot_offset = tutorial_caution_panel.size * 0.5
-	if current_is_tutorial:
-		hint_button.visible = false
-		restart_button.visible = false
-	else:
-		hint_button.visible = true
-		restart_button.visible = true
-		var half := (TOP_STATUS_SIZE.x - 47.0) * 0.5
-		hint_button.position = Vector2(status_x, action_y)
-		hint_button.size = Vector2(half, ACTION_BUTTON_HEIGHT)
-		restart_button.position = Vector2(status_x + half + 47.0, action_y)
-		restart_button.size = Vector2(half, ACTION_BUTTON_HEIGHT)
+	hint_button.visible = true
+	restart_button.visible = true
+	var half := (TOP_STATUS_SIZE.x - 47.0) * 0.5
+	hint_button.position = Vector2(status_x, action_y)
+	hint_button.size = Vector2(half, ACTION_BUTTON_HEIGHT)
+	restart_button.position = Vector2(status_x + half + 47.0, action_y)
+	restart_button.size = Vector2(half, ACTION_BUTTON_HEIGHT)
 	hint_button.pivot_offset = hint_button.size * 0.5
 	restart_button.pivot_offset = restart_button.size * 0.5
 	layout_lumens_badge()
@@ -429,7 +415,9 @@ void fragment() {
 	hint_button.clip_contents = false
 	UIStyles.menu_button(hint_button)
 	hint_button.pressed.connect(func():
-		if hint_popup != null and hint_popup.has_method("has_cached_result") and hint_popup.has_cached_result():
+		if current_is_tutorial:
+			hint_requested.emit()
+		elif hint_popup != null and hint_popup.has_method("has_cached_result") and hint_popup.has_cached_result():
 			hint_requested.emit()
 		elif current_lumens < current_hint_cost:
 			hint_requested.emit()
@@ -462,7 +450,6 @@ void fragment() {
 	UIStyles.apply_font(hint_label, UIStyles.FONT_SEMIBOLD, 47, UIStyles.TEXT)
 	hint_button.add_child(hint_label)
 	build_lumens_badge()
-	build_tutorial_caution()
 
 	operation_legend = OperationLegendScene.instantiate()
 	add_child(operation_legend)
@@ -482,97 +469,13 @@ void fragment() {
 	coach_overlay.build()
 	coach_overlay.connect("showing_started", _on_coach_showing_started)
 	coach_overlay.connect("hiding_started", _on_coach_hiding_started)
+	coach_overlay.connect("hiding_finished", _on_coach_hiding_finished)
 	_apply_layout()
 	# После ребилда (смена темы/языка) сразу восстанавливаем «серое» состояние подсказки
 	# и бейджа, если были в тупике — иначе новый оверлей бейджа рождается прозрачным и на
 	# кадр показывает фиолетовый (аналог восстановления подсветки в Main.show_game).
 	if _hint_dimmed:
 		_apply_hint_dim(1.0)
-
-func build_tutorial_caution() -> void:
-	if tutorial_caution_tween != null and tutorial_caution_tween.is_valid():
-		tutorial_caution_tween.kill()
-	tutorial_caution_panel = Button.new()
-	tutorial_caution_panel.visible = false
-	tutorial_caution_panel.focus_mode = Control.FOCUS_NONE
-	tutorial_caution_panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	tutorial_caution_panel.z_index = 30
-	tutorial_caution_panel.size = Vector2(TUTORIAL_CAUTION_WIDTH, TUTORIAL_CAUTION_HEIGHT)
-	tutorial_caution_panel.add_theme_font_size_override("font_size", 47)
-	# Match Hint / Restart: same glass surface, geometry, semibold size and press
-	# interaction. The visible caption is a separate label so only its glyphs can
-	# receive the same diagonal purple gradient used by the ORBIT wordmark.
-	UIStyles.menu_button(tutorial_caution_panel)
-	tutorial_caution_panel.text = ""
-	tutorial_caution_panel.pressed.connect(_on_tutorial_caution_pressed)
-	add_child(tutorial_caution_panel)
-
-	tutorial_caution_label = Label.new()
-	tutorial_caution_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tutorial_caution_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	tutorial_caution_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tutorial_caution_label.z_index = 2
-	UIStyles.apply_font(tutorial_caution_label, UIStyles.FONT_SEMIBOLD, 47, Color.WHITE)
-	tutorial_caution_panel.add_child(tutorial_caution_label)
-	_update_tutorial_caution_copy()
-	_sync_tutorial_caution_visibility()
-
-func _update_tutorial_caution_copy() -> void:
-	if tutorial_caution_panel == null or tutorial_caution_label == null:
-		return
-	var caption := Locale.t("tutorial.caution.title", "Tutorial Safety Card").to_upper()
-	var caption_width := UIStyles.FONT_SEMIBOLD.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, 47).x
-	var caption_height := 72.0
-	tutorial_caution_label.text = caption
-	tutorial_caution_label.position = Vector2(
-		(tutorial_caution_panel.size.x - caption_width) * 0.5,
-		(tutorial_caution_panel.size.y - caption_height) * 0.5
-	)
-	tutorial_caution_label.size = Vector2(caption_width, caption_height)
-	tutorial_caution_label.material = UIStyles.gradient_text_material(
-		UIStyles.PRIMARY_TOP,
-		UIStyles.PRIMARY_BOTTOM,
-		tutorial_caution_label.size
-	)
-
-func _on_tutorial_caution_pressed() -> void:
-	if not current_is_tutorial:
-		return
-	show_temporary_help(
-		Locale.t("tutorial.caution.info", "Tutorials block mistakes. Real levels do not."),
-		false
-	)
-
-func show_tutorial_caution() -> void:
-	if not current_is_tutorial or tutorial_caution_panel == null:
-		return
-	_update_tutorial_caution_copy()
-	if tutorial_caution_tween != null and tutorial_caution_tween.is_valid():
-		tutorial_caution_tween.kill()
-	tutorial_caution_panel.visible = true
-	tutorial_caution_panel.pivot_offset = tutorial_caution_panel.size * 0.5
-	tutorial_caution_panel.modulate.a = 1.0
-	tutorial_caution_panel.scale = Vector2.ONE
-	tutorial_caution_tween = tutorial_caution_panel.create_tween()
-	tutorial_caution_tween.tween_property(tutorial_caution_panel, "scale", Vector2(1.04, 1.04), 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tutorial_caution_tween.tween_property(tutorial_caution_panel, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-
-func _sync_tutorial_caution_visibility() -> void:
-	if tutorial_caution_tween != null and tutorial_caution_tween.is_valid():
-		tutorial_caution_tween.kill()
-	if tutorial_caution_panel == null:
-		return
-	tutorial_caution_panel.visible = current_is_tutorial
-	tutorial_caution_panel.modulate.a = 1.0
-	tutorial_caution_panel.scale = Vector2.ONE
-
-func hide_tutorial_caution() -> void:
-	if tutorial_caution_tween != null and tutorial_caution_tween.is_valid():
-		tutorial_caution_tween.kill()
-	if tutorial_caution_panel != null:
-		tutorial_caution_panel.visible = false
-		tutorial_caution_panel.modulate.a = 1.0
-		tutorial_caution_panel.scale = Vector2.ONE
 
 func configure(title_text: String, current_number: int, target_number: int, moves: int, star_mode: String, star_bands: Array, orbit_items: Array, allowed_ops: Array, failed: bool, lumens: int, hint_cost: int, tutorial: bool = false, tutorial_help: String = "", coach_hint: Dictionary = {}, placeholder: bool = false) -> void:
 	var previous_moves := current_moves
@@ -588,7 +491,6 @@ func configure(title_text: String, current_number: int, target_number: int, move
 	current_star_bands = star_bands.duplicate(true)
 	current_is_tutorial = tutorial
 	current_is_placeholder = placeholder
-	_sync_tutorial_caution_visibility()
 	if hint_popup != null:
 		hint_popup.configure_state(current_moves, current_lumens, current_hint_cost)
 	level_label.text = title_text
@@ -627,7 +529,7 @@ func configure(title_text: String, current_number: int, target_number: int, move
 	goal_label.size = TARGET_BUBBLE_SIZE
 	operation_legend.configure_ops(allowed_ops)
 	operation_legend.visible = not placeholder
-	hint_button.visible = not tutorial
+	hint_button.visible = true
 	# A hint is useless both in a dead end and in an unfinished placeholder.
 	hint_button.disabled = (level_failed or placeholder) and not tutorial
 	update_hint_button_label(lumens)
@@ -960,7 +862,8 @@ func layout_lumens_badge() -> void:
 	var badge_pos := Vector2(hint_button.size.x - badge_size.x - 27.0, -33.0)
 	lumens_badge.position = badge_pos
 	lumens_badge.size = badge_size
-	lumens_badge.visible = hint_button.visible
+	# Tutorial hints are free, so the regular balance badge is intentionally absent.
+	lumens_badge.visible = hint_button.visible and not current_is_tutorial
 	if lumens_badge_border != null:
 		lumens_badge_border.position = Vector2.ZERO
 		lumens_badge_border.size = badge_size
@@ -1393,7 +1296,10 @@ func reject_tutorial_orbit(item_id: String) -> void:
 	var op := str(button.get_meta("op", ""))
 	play_rejected_orbit_feedback(button, op, true)
 	AudioManagerScript.play_tutorial_wrong_move_haptic()
-	show_tutorial_caution()
+	show_temporary_help(
+		Locale.t("tutorial.wrong_move", "Tutorial is safe. Levels have traps."),
+		false
+	)
 
 func set_rejected_orbit_offset(button: Button, offset: Vector2) -> void:
 	if button != null and not button.is_queued_for_deletion():
@@ -1548,9 +1454,13 @@ func _on_coach_showing_started() -> void:
 func _on_coach_hiding_started() -> void:
 	start_orbit_spin_ramp()
 	_set_local_header_over_coach(false)
-	coach_header_mode_changed.emit(false)
+	# Keep persistent navigation blocked until the dim shader has fully faded.
+	coach_header_mode_changed.emit(true)
 	if info_panel != null:
 		info_panel.visible = true
+
+func _on_coach_hiding_finished() -> void:
+	coach_header_mode_changed.emit(false)
 
 func _set_local_header_over_coach(shown: bool) -> void:
 	for button in [back_button, settings_button]:

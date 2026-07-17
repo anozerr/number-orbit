@@ -68,8 +68,9 @@ static var _tables: Dictionary = {
 		"tut.divide.after": "Grey cannot divide the center exactly.",
 		"tut.order.start": "Order matters — plan before you tap.",
 		"tut.order.after": "Watch the center and plan ahead.",
-		"tutorial.caution.title": "Tutorial Safety Card",
-		"tutorial.caution.info": "Tutorials block mistakes. Real levels do not.",
+		"tutorial.wrong_move": "Tutorial is safe. Levels have traps.",
+		"tutorial.hint.next": "The next winning move is highlighted.",
+		"tutorial.hint.none": "No winning move is available. Restart the explanation.",
 	},
 	"ru": {
 		"common.cancel": "Отмена",
@@ -192,8 +193,9 @@ static var _tables: Dictionary = {
 		"coach.divide.orbit": "Оранжевые доступны, только пока делят центр ровно.",
 		"coach.divide.grey": "Это оранжевое число серое — сейчас не делится ровно.",
 		"coach.order.orbit": "Теперь все четыре цвета вместе. Важно не только что, но и когда.",
-		"tutorial.caution.title": "Карта безопасности",
-		"tutorial.caution.info": "Туториал блокирует ошибки. Уровни — нет.",
+		"tutorial.wrong_move": "Здесь безопасно. Дальше — ловушки.",
+		"tutorial.hint.next": "Следующий победный ход подсвечен.",
+		"tutorial.hint.none": "Победных ходов нет. Перезапустите объяснение.",
 	},
 }
 

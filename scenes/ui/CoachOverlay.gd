@@ -4,6 +4,7 @@ extends Control
 const PopupFactoryScript = preload("res://scripts/ui/PopupFactory.gd")
 
 signal hiding_started
+signal hiding_finished
 signal showing_started
 
 const DESIGN_SCALE := 3.0
@@ -11,6 +12,7 @@ const PANEL_WIDTH := 820.0
 const PANEL_MIN_HEIGHT := 330.0
 const PANEL_PAD_X := 60.0
 const PANEL_PAD_Y := 42.0
+const COACH_TEXT_FONT_SIZE := int(16.0 * DESIGN_SCALE)
 const PANEL_SCREEN_MARGIN := 30.0 * DESIGN_SCALE
 const SPOTLIGHT_PADDING := 8.0
 const SPOTLIGHT_FEATHER := 20.0
@@ -105,10 +107,12 @@ void fragment() {
 	float glow_alpha = clamp(max(edge_alpha, pulse_alpha), 0.0, 1.0);
 	float animated_share = clamp(max(breathing_glow_alpha, pulse_alpha) / max(glow_alpha, 0.0001), 0.0, 1.0);
 	vec3 glow_rgb = edge_tint_color.rgb * mix(1.0, ring_brightness, animated_share);
-	float composed_alpha = dim_alpha + glow_alpha * (1.0 - dim_alpha);
+	// The attention glow is the foreground layer. Composing the dim color first
+	// put the glow visually behind the coach mask and made it nearly disappear.
+	float composed_alpha = glow_alpha + dim_alpha * (1.0 - glow_alpha);
 	vec3 composed_rgb = dim_color.rgb;
 	if (composed_alpha > 0.0001) {
-		composed_rgb = (dim_color.rgb * dim_alpha + glow_rgb * glow_alpha * (1.0 - dim_alpha)) / composed_alpha;
+		composed_rgb = (glow_rgb * glow_alpha + dim_color.rgb * dim_alpha * (1.0 - glow_alpha)) / composed_alpha;
 	}
 	COLOR = vec4(composed_rgb, composed_alpha * fade_alpha);
 }
@@ -312,7 +316,7 @@ func build() -> void:
 	label.clip_text = true
 	label.add_theme_constant_override("line_spacing", int(6.0 * DESIGN_SCALE))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	UIStyles.apply_font(label, UIStyles.FONT_SEMIBOLD, int(16.0 * DESIGN_SCALE), Color.WHITE)
+	UIStyles.apply_font(label, UIStyles.FONT_SEMIBOLD, COACH_TEXT_FONT_SIZE, Color.WHITE)
 	label.self_modulate = UIStyles.TEXT
 	panel.add_child(label)
 
@@ -467,19 +471,16 @@ func refresh_spotlight() -> void:
 		panel.position = panel_position_for_rect(rect)
 
 func layout_panel(text: String) -> void:
-	# 28 characters keeps even the widest Jakarta/Onest lines safely inside the
-	# 700px text lane; clip_text then acts only as a last-resort guard.
-	var wrapped_lines := _wrapped_text_lines(text, 28)
+	var inner_w := PANEL_WIDTH - PANEL_PAD_X * 2.0
+	# Cyrillic glyphs are wider than the Latin glyphs used by the old character
+	# limit. Pack words by their rendered pixel width so every locale stays inside
+	# the actual text lane; clip_text remains only a last-resort guard.
+	var wrapped_lines := _wrapped_text_lines(text, inner_w)
 	label.text = "\n".join(wrapped_lines)
 	label.visible = true
 	label.modulate = Color.WHITE
 	var visible_step := clampi(progress_start + step_index + 1, 1, progress_total)
 	eyebrow_label.text = (("ШАГ %d ИЗ %d" if Locale.language() == "ru" else "STEP %d OF %d") % [visible_step, progress_total])
-	var inner_w := PANEL_WIDTH - PANEL_PAD_X * 2.0
-	var main_font_size := int(16.0 * DESIGN_SCALE)
-	# Godot 4.7 can return multi-thousand-pixel sizes for strings containing an
-	# em dash/fallback glyph in both multiline and single-line font measurement.
-	# Use deterministic word packing; the Label itself performs the visual wrap.
 	var estimated_lines := wrapped_lines.size()
 	var line_height := 58.0
 	var text_h := line_height * float(estimated_lines) + 18.0 * float(estimated_lines - 1)
@@ -506,26 +507,52 @@ func layout_panel(text: String) -> void:
 		dot.position = Vector2(dots_x + float(i) * (dot_size + dot_gap), bottom_y + (bottom_h - dot_size) * 0.5)
 		progress_dot_styles[i].bg_color = UIStyles.PURPLE if i == visible_step - 1 else UIStyles.COACH_DOT_INACTIVE
 
-func _wrapped_text_lines(text: String, characters_per_line: int) -> PackedStringArray:
+func _wrapped_text_lines(text: String, max_width: float) -> PackedStringArray:
 	var lines := PackedStringArray()
 	var current_line := ""
-	var current_length := 0
 	for raw_word in text.split(" ", false):
 		var word := str(raw_word)
-		var word_length := word.length()
-		var next_length := word_length if current_length == 0 else current_length + 1 + word_length
-		if current_length > 0 and next_length > characters_per_line:
+		var candidate := word if current_line.is_empty() else "%s %s" % [current_line, word]
+		if not current_line.is_empty() and _coach_text_width(candidate) > max_width:
 			lines.append(current_line)
-			current_line = word
-			current_length = word_length
+			current_line = ""
+		if current_line.is_empty() and _coach_text_width(word) > max_width:
+			var chunks := _split_word_by_width(word, max_width)
+			for i in range(chunks.size() - 1):
+				lines.append(chunks[i])
+			current_line = chunks[chunks.size() - 1]
 		else:
-			current_line = word if current_line.is_empty() else "%s %s" % [current_line, word]
-			current_length = next_length
+			current_line = word if current_line.is_empty() else candidate
 	if not current_line.is_empty():
 		lines.append(current_line)
 	if lines.is_empty():
 		lines.append("")
 	return lines
+
+func _split_word_by_width(word: String, max_width: float) -> PackedStringArray:
+	var chunks := PackedStringArray()
+	var current_chunk := ""
+	for i in range(word.length()):
+		var character := word.substr(i, 1)
+		var candidate := current_chunk + character
+		if not current_chunk.is_empty() and _coach_text_width(candidate) > max_width:
+			chunks.append(current_chunk)
+			current_chunk = character
+		else:
+			current_chunk = candidate
+	if not current_chunk.is_empty():
+		chunks.append(current_chunk)
+	if chunks.is_empty():
+		chunks.append("")
+	return chunks
+
+func _coach_text_width(text: String) -> float:
+	return UIStyles.FONT_SEMIBOLD.get_string_size(
+		text,
+		HORIZONTAL_ALIGNMENT_LEFT,
+		-1,
+		COACH_TEXT_FONT_SIZE
+	).x
 
 func dim_color() -> Color:
 	return UIStyles.COACH_DIM
@@ -660,6 +687,7 @@ func _finish_fade_out(check_version: int, fade: Tween) -> void:
 		if dim_mask != null:
 			dim_mask.modulate.a = 1.0
 			dim_mask.fade_alpha = 1.0
+		hiding_finished.emit()
 
 func hide_hint() -> void:
 	if is_hiding:

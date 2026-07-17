@@ -264,7 +264,7 @@ func show_result(title_text: String, stars: int, moves: int, has_next: bool, rew
 		stars_label.position = Vector2(0, 292)
 		next_button.position = Vector2(PopupFactoryScript.POPUP_PAD, DETAILS_NEXT_Y)
 		levels_button.position = Vector2(PopupFactoryScript.POPUP_PAD, DETAILS_LEVELS_Y)
-		draw_star_row(stars)
+		draw_star_row(stars, animate)
 		moves_label.text = Locale.t("complete.moves", "Moves: %d") % moves
 		update_reward_pill(reward * 2 if _reward_doubled else reward)
 		next_button.visible = has_next
@@ -274,7 +274,7 @@ func show_result(title_text: String, stars: int, moves: int, has_next: bool, rew
 		title_label.position = Vector2(0, 150.0)
 		next_button.position = Vector2(PopupFactoryScript.POPUP_PAD, 470.0)
 		levels_button.position = Vector2(PopupFactoryScript.POPUP_PAD, 795.0)
-		draw_star_row(0)
+		draw_star_row(0, animate)
 		reward_glow.visible = false
 		reward_pill.visible = false
 		reward_hint_label.visible = false
@@ -514,7 +514,7 @@ func hide_popup(after_hidden: Callable = Callable()) -> void:
 		if after_hidden.is_valid():
 			after_hidden.call()
 
-func draw_star_row(count: int) -> void:
+func draw_star_row(count: int, animate: bool = true) -> void:
 	for child in stars_label.get_children():
 		child.queue_free()
 	var star_size := 112.0
@@ -527,6 +527,10 @@ func draw_star_row(count: int) -> void:
 		var position := Vector2(start_x + i * (star_size + gap), 3)
 		var star := UIStyles.icon(texture, stars_label, position, Vector2(star_size, star_size), color)
 		star.pivot_offset = star.size * 0.5
+		if not animate:
+			star.scale = Vector2.ONE
+			star.modulate.a = 1.0
+			continue
 		star.scale = Vector2(0.62, 0.62) if i < count else Vector2(0.82, 0.82)
 		star.modulate.a = 0.0
 		var tween := star.create_tween()

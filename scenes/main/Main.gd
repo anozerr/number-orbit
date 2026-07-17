@@ -13,7 +13,6 @@ const SCREEN_FADE_OUT_DURATION := 0.16
 const SCREEN_FADE_IN_DURATION := 0.20
 const SCREEN_TRANSITION_ROLE_META := &"screen_transition_role"
 const PERSISTENT_HEADER_Z_INDEX := 10
-const COACH_HEADER_Z_INDEX := 200
 const HEADER_TWEEN_META := &"persistent_header_tween"
 # Кросс-фейд смены темы/языка (4.1/4.2): снапшот старого экрана растворяется над
 # мгновенно перестроенным новым. 0.32с (было 0.48) — меньше заблокированного ввода.
@@ -231,6 +230,7 @@ func _build_persistent_header() -> void:
 	UIStyles.icon(UIStyles.ICON_GEAR, persistent_settings_button, Vector2(33, 33), Vector2(60, 60), UIStyles.TEXT)
 	_layout_persistent_header()
 	_apply_persistent_header_immediate(_current_screen_node())
+	_set_persistent_header_coach_blocked(_game_coach_active())
 
 func _layout_persistent_header() -> void:
 	if not is_instance_valid(persistent_header_root):
@@ -285,13 +285,31 @@ func _apply_persistent_header_immediate(screen: CanvasItem) -> void:
 		button.modulate.a = 1.0
 		button.mouse_filter = Control.MOUSE_FILTER_STOP if shown else Control.MOUSE_FILTER_IGNORE
 
+func _game_coach_active() -> bool:
+	return (
+		current_screen == "game"
+		and is_instance_valid(game_screen)
+		and is_instance_valid(game_screen.coach_overlay)
+		and game_screen.coach_overlay.visible
+	)
+
+func _set_persistent_header_coach_blocked(blocked: bool) -> void:
+	for button in [persistent_back_button, persistent_settings_button]:
+		if not is_instance_valid(button):
+			continue
+		if blocked:
+			button.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		elif button.visible:
+			button.mouse_filter = Control.MOUSE_FILTER_STOP
+
 func _transition_persistent_header(from_screen: CanvasItem, to_screen: CanvasItem, animate: bool, internal_transition: bool) -> void:
 	_hide_all_local_headers()
 	var coach_active := to_screen == game_screen and is_instance_valid(game_screen.coach_overlay) and game_screen.coach_overlay.visible
 	if is_instance_valid(persistent_header_root):
-		persistent_header_root.z_index = COACH_HEADER_Z_INDEX if coach_active else PERSISTENT_HEADER_Z_INDEX
+		persistent_header_root.z_index = PERSISTENT_HEADER_Z_INDEX
 	if coach_active:
 		_apply_persistent_header_immediate(game_screen)
+		_set_persistent_header_coach_blocked(true)
 		return
 	if not animate:
 		_apply_persistent_header_immediate(to_screen)
@@ -520,8 +538,9 @@ func _on_game_coach_header_mode_changed(active: bool) -> void:
 	if current_screen != "game":
 		return
 	if is_instance_valid(persistent_header_root):
-		persistent_header_root.z_index = COACH_HEADER_Z_INDEX if active else PERSISTENT_HEADER_Z_INDEX
+		persistent_header_root.z_index = PERSISTENT_HEADER_Z_INDEX
 	_apply_persistent_header_immediate(game_screen)
+	_set_persistent_header_coach_blocked(active)
 	game_screen._set_local_header_over_coach(false)
 
 func _on_settings_back_pressed() -> void:
@@ -649,7 +668,8 @@ func clear_tutorial_coach_memory(tutorial_id: String) -> void:
 
 func restart_level() -> void:
 	if tutorial_mode:
-		load_tutorial_level(tutorial_index, false)
+		# Restart the board and replay this tutorial's explanation from its first step.
+		load_tutorial_level(tutorial_index, true)
 	else:
 		load_level(state.current_level)
 	show_game()
@@ -804,6 +824,7 @@ func orbit_item_exists(item_id: String) -> bool:
 
 func _on_hint_requested() -> void:
 	if tutorial_mode:
+		show_free_tutorial_hint()
 		return
 	if state.has_cached_hint_for_current_move():
 		var cached_target := state.cached_hint_target.duplicate(true)
@@ -835,6 +856,36 @@ func _on_hint_requested() -> void:
 		else:
 			game_screen.reveal_hint_result(hint_text, state.lumens, hint_target)
 		refresh_game_screen()
+
+func show_free_tutorial_hint() -> void:
+	# Tutorials never spend Lumens or open the purchase prompt. Pick the first
+	# currently available move that still leaves a complete path to the target.
+	var target: Dictionary = {}
+	for raw_item in orbit_items:
+		var item: Dictionary = raw_item as Dictionary
+		var value := int(item.get("value", 0))
+		var op := str(item.get("op", ""))
+		var item_id := str(item.get("id", ""))
+		if tutorial_move_keeps_winning_path(value, op, item_id):
+			target = {
+				"id": item_id,
+				"op": op,
+				"value": value
+			}
+			break
+	if target.is_empty():
+		AudioManagerScript.play_invalid()
+		game_screen.show_temporary_help(
+			Locale.t("tutorial.hint.none", "No winning move is available. Restart the explanation."),
+			false
+		)
+		return
+	AudioManagerScript.play_hint_reveal()
+	game_screen.highlight_hint_target(target)
+	game_screen.show_temporary_help(
+		Locale.t("tutorial.hint.next", "The next winning move is highlighted."),
+		false
+	)
 
 func _on_hint_ad_requested() -> void:
 	if tutorial_mode:
