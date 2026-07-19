@@ -886,6 +886,11 @@ static func _ensure_hover_highlight(button: Button) -> Panel:
 	hl.name = "HoverHighlight"
 	hl.set_anchors_preset(Control.PRESET_FULL_RECT)
 	hl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Some scroll surfaces apply their edge mask through inherited materials.
+	# This overlay is created lazily after those surfaces have propagated the
+	# material flag, so mirror the button's flag instead of bypassing the mask.
+	# Outside such a surface the flag remains false and behavior is unchanged.
+	hl.use_parent_material = button.use_parent_material
 	hl.modulate.a = 0.0
 	var s := StyleBoxFlat.new()
 	s.bg_color = Color(1, 1, 1) if is_dark() else Color(0, 0, 0)

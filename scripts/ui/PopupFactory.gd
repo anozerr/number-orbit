@@ -12,7 +12,7 @@ const POPUP_TITLE_Y := 154.0
 const POPUP_PRIMARY_H := 188.0
 const POPUP_SECONDARY_H := 168.0
 const BADGE_SHADOW := Color(0, 0, 0, 0.10)
-const SCRIM_TINT_LIGHT := Color(15.0 / 255.0, 10.0 / 255.0, 30.0 / 255.0, 0.28)
+const SCRIM_TINT_LIGHT := Color(15.0 / 255.0, 10.0 / 255.0, 30.0 / 255.0, 0.22)
 const SCRIM_TINT_DARK := Color(0, 0, 0, 0.50)
 const SHEET_OPEN_DURATION := 0.32
 const SHEET_CLOSE_DURATION := 0.28
@@ -250,11 +250,11 @@ shader_type canvas_item;
 // So we combine a mid mip level (cheap pre-blur) with a jittered golden-angle disk
 // of taps (widens the blur and scatters residual detail into invisible noise).
 uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear_mipmap;
-uniform float blur_lod = 4.0;
-uniform float blur_px = 108.0;
+uniform float blur_lod = 5.0;
+uniform float blur_px = 165.0;
 uniform float panel_alpha = 0.82;
 
-const int TAPS = 20;
+const int TAPS = 32;
 const float GOLDEN = 2.3999632;
 
 float hash12(vec2 p) {
@@ -284,12 +284,11 @@ vec3 frosted_blur(vec2 uv, vec2 texel, float jitter) {
 	return sum / total;
 }
 
-// Desaturate the blurred backdrop a touch but keep its brightness — no grey veil,
-// so a dark screen stays dark charcoal under the glass (matches the design) rather
-// than lifting to mid-grey.
+// Keep almost all of the backdrop's colour (iPhone-style frost stays tinted, not
+// grey). Only a hair of desaturation so very saturated content doesn't scream.
 vec3 soften_detail(vec3 color) {
 	float luma = dot(color, vec3(0.299, 0.587, 0.114));
-	return mix(vec3(luma), color, 0.62);
+	return mix(vec3(luma), color, 0.92);
 }
 
 void fragment() {
@@ -297,8 +296,12 @@ void fragment() {
 	vec2 texel = 1.0 / vec2(textureSize(screen_texture, 0));
 	float jitter = hash12(FRAGCOORD.xy) * 6.2831853;
 	vec3 blurred = soften_detail(frosted_blur(SCREEN_UV, texel, jitter));
+	// The active palette supplies either the light white frost or the dark translucent
+	// frost. Blur geometry and sampling stay identical across both themes.
 	COLOR.rgb = mix(blurred, style_color.rgb, style_color.a);
-	COLOR.a = clamp(style_color.a / max(panel_alpha, 0.001), 0.0, 1.0);
+	// Saturate coverage to fully opaque across the fill. The 0.7 headroom prevents
+	// sharp background detail leaking through while rounded edges still antialias.
+	COLOR.a = clamp(style_color.a / max(panel_alpha * 0.7, 0.001), 0.0, 1.0);
 }
 """
 	return _panel_shader

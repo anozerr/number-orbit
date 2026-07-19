@@ -743,16 +743,10 @@ func star_requirements_text() -> String:
 		LevelData.STAR_MODE_ALWAYS_THREE:
 			if current_star_bands.is_empty():
 				return ""
-			var band: Dictionary = current_star_bands[0] as Dictionary
-			var winning_lengths: Array = (band.get("winning_lengths", []) as Array).duplicate()
-			winning_lengths.sort()
-			var length_parts: Array[String] = []
-			for length in winning_lengths:
-				length_parts.append(str(int(length)))
 			return Locale.t(
-				"game.stars.exact_lengths",
-				"Star goals: %s %s",
-			) % [star_text(3), ", ".join(length_parts)]
+				"game.stars.only_three",
+				"This level awards ★★★ only.",
+			)
 		LevelData.STAR_MODE_TIERED:
 			return star_band_ranges_text(current_star_bands)
 	return ""
@@ -760,7 +754,8 @@ func star_requirements_text() -> String:
 func star_band_ranges_text(bands: Array) -> String:
 	# min_moves/max_moves are the authoritative emitted intervals.
 	var parts: Array[String] = []
-	for raw_band in bands:
+	for index in range(bands.size()):
+		var raw_band: Variant = bands[index]
 		var band: Dictionary = raw_band as Dictionary
 		var stars := int(band.get("stars", 1))
 		var lower := int(band.get("min_moves", -1))
@@ -770,8 +765,14 @@ func star_band_ranges_text(bands: Array) -> String:
 			moves_text = str(upper)
 		else:
 			moves_text = "%d–%d" % [lower, upper]
-		parts.append("%s %s" % [star_text(stars), moves_text])
-	return Locale.t("game.stars.band_list", "Star goals: %s") % " · ".join(parts)
+		if index == 0:
+			parts.append(Locale.t(
+				"game.stars.band_list",
+				"%s moves = %s",
+			) % [moves_text, star_text(stars)])
+		else:
+			parts.append("%s = %s" % [moves_text, star_text(stars)])
+	return " · ".join(parts)
 
 func star_text(count: int) -> String:
 	match count:
@@ -787,17 +788,21 @@ func progress_comment_text(moves: int) -> String:
 	if current_star_mode == LevelData.STAR_MODE_ALWAYS_THREE:
 		return Locale.t("game.stars.keep3", "Reach the target — ★★★ on completion.")
 	if current_star_mode == LevelData.STAR_MODE_TIERED:
+		var next_move := moves + 1
 		for raw_band in current_star_bands:
 			var band: Dictionary = raw_band as Dictionary
-			if moves <= int(band.get("max_moves", -1)):
+			if (
+				next_move >= int(band.get("min_moves", -1))
+				and next_move <= int(band.get("max_moves", -1))
+			):
 				match int(band.get("stars", 0)):
 					3:
-						return Locale.t("game.progress.on3", "On track for 3 stars.")
+						return Locale.t("game.progress.on3", "On track for ★★★.")
 					2:
-						return Locale.t("game.progress.on2", "2 stars still in reach.")
+						return Locale.t("game.progress.on2", "★★ still in reach.")
 					_:
-						return Locale.t("game.progress.almost", "Almost there — reach the target.")
-	return Locale.t("game.progress.almost", "Almost there — reach the target.")
+						return Locale.t("game.progress.on1", "★ still in reach.")
+	return Locale.t("game.progress.finish", "Reach the target.")
 
 func fail_comment_text() -> String:
 	# Автоматическое поражение наступает только когда на доске действительно не
@@ -1088,8 +1093,15 @@ func set_orbit_items(items: Array) -> void:
 		btn.set_meta("orbit_target_angle", target_angle)
 		btn.set_meta("orbit_force_clockwise", bool(item.get("orbit_force_clockwise", false)))
 		var valid_operation := OperationLogic.can_apply(current_number_value, value, op)
+		var had_validity := btn.has_meta("operation_valid")
+		var previous_validity := bool(btn.get_meta("operation_valid", valid_operation))
 		btn.set_meta("operation_valid", valid_operation)
-		style_operation_button(btn, op, valid_operation)
+		if is_new or not had_validity:
+			style_operation_button(btn, op, valid_operation)
+		elif previous_validity != valid_operation:
+			animate_operation_availability(btn, op, previous_validity, valid_operation)
+		elif not btn.has_meta("availability_tween"):
+			style_operation_button(btn, op, valid_operation)
 		# A grey satellite remains clickable so it can acknowledge the tap without
 		# applying the operation. A failed level still blocks the whole orbit.
 		btn.disabled = level_failed
@@ -1113,6 +1125,8 @@ func restore_orbit_without_entrance_animation() -> void:
 # синхронизации блокировки ввода (4.3) — вместо «магической» 0.22 в Main.
 const ORBIT_DISAPPEAR_GROW := 0.07
 const ORBIT_DISAPPEAR_FADE := 0.14
+const ORBIT_AVAILABILITY_DURATION := 0.26
+const ORBIT_REENABLE_PULSE := 0.03
 # Ввод разблокируется, когда убранный спутник практически исчез (он `disabled` сразу,
 # так что даблтап по нему невозможен), а оставшиеся уже перетекают — «доска готова».
 const ORBIT_MOVE_SETTLE_TIME := ORBIT_DISAPPEAR_FADE
@@ -1125,6 +1139,7 @@ func animate_orbit_disappear(button: Button) -> void:
 		return
 	if bool(button.get_meta("popping", false)):
 		return
+	finish_operation_availability(button)
 	button.set_meta("popping", true)
 	button.disabled = true
 	button.pivot_offset = button.size * 0.5
@@ -1151,16 +1166,86 @@ func find_orbit_button(item_id: String) -> Button:
 func style_operation_button(button: Button, op: String, valid: bool = true) -> void:
 	# Satellite matches its operator's chip: fill = plate, outline = identity color,
 	# number = high-contrast semantic text color.
-	var bg: Color = UIStyles.operation_plate(op)
-	var border: Color = UIStyles.operation_border(op)
-	var text_color: Color = UIStyles.operation_text(op)
-	if not valid:
-		bg = disabled_orbit_bg()
-		# At rest an unavailable move is fully neutral: outline and number share the
-		# same grey. Its operator color is revealed only by the rejected-tap flash.
-		border = UIStyles.DISABLED
-		text_color = UIStyles.DISABLED
-	apply_operation_button_style(button, op, bg, border, text_color, valid)
+	var colors := operation_button_colors(op, valid)
+	apply_operation_button_style(button, op, colors["bg"], colors["border"], colors["text"], valid)
+
+func operation_button_colors(op: String, valid: bool) -> Dictionary:
+	if valid:
+		return {
+			"bg": UIStyles.operation_plate(op),
+			"border": UIStyles.operation_border(op),
+			"text": UIStyles.operation_text(op),
+		}
+	# At rest an unavailable move is fully neutral: outline and number share the
+	# same grey. Its operator color is revealed only by the rejected-tap flash.
+	return {
+		"bg": disabled_orbit_bg(),
+		"border": UIStyles.DISABLED,
+		"text": UIStyles.DISABLED,
+	}
+
+func animate_operation_availability(button: Button, op: String, from_valid: bool, to_valid: bool) -> void:
+	if button == null or button.is_queued_for_deletion():
+		return
+	var from_colors := operation_button_colors(op, from_valid)
+	if button.has_meta("availability_bg"):
+		from_colors = {
+			"bg": button.get_meta("availability_bg"),
+			"border": button.get_meta("availability_border"),
+			"text": button.get_meta("availability_text"),
+		}
+	_kill_operation_availability_tween(button)
+	var to_colors := operation_button_colors(op, to_valid)
+	button.scale = Vector2.ONE
+	var tween := button.create_tween()
+	button.set_meta("availability_tween", tween)
+	tween.tween_method(func(amount: float) -> void:
+		if button == null or button.is_queued_for_deletion():
+			return
+		var bg: Color = (from_colors["bg"] as Color).lerp(to_colors["bg"] as Color, amount)
+		var border: Color = (from_colors["border"] as Color).lerp(to_colors["border"] as Color, amount)
+		var text_color: Color = (from_colors["text"] as Color).lerp(to_colors["text"] as Color, amount)
+		button.set_meta("availability_bg", bg)
+		button.set_meta("availability_border", border)
+		button.set_meta("availability_text", text_color)
+		apply_operation_button_style(button, op, bg, border, text_color, to_valid)
+		if to_valid:
+			var pulse := 1.0 + sin(amount * PI) * ORBIT_REENABLE_PULSE
+			button.scale = Vector2.ONE * pulse
+	, 0.0, 1.0, ORBIT_AVAILABILITY_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tween.finished.connect(func() -> void:
+		if button == null or button.is_queued_for_deletion():
+			return
+		if button.get_meta("availability_tween", null) != tween:
+			return
+		button.remove_meta("availability_tween")
+		_clear_operation_availability_colors(button)
+		button.scale = Vector2.ONE
+		style_operation_button(button, op, bool(button.get_meta("operation_valid", to_valid)))
+	)
+
+func finish_operation_availability(button: Button) -> void:
+	if button == null or button.is_queued_for_deletion():
+		return
+	_kill_operation_availability_tween(button)
+	_clear_operation_availability_colors(button)
+	button.scale = Vector2.ONE
+	var op := str(button.get_meta("op", ""))
+	if not op.is_empty():
+		style_operation_button(button, op, bool(button.get_meta("operation_valid", true)))
+
+func _kill_operation_availability_tween(button: Button) -> void:
+	if not button.has_meta("availability_tween"):
+		return
+	var tween := button.get_meta("availability_tween") as Tween
+	if tween != null and tween.is_valid():
+		tween.kill()
+	button.remove_meta("availability_tween")
+
+func _clear_operation_availability_colors(button: Button) -> void:
+	for meta_key in [&"availability_bg", &"availability_border", &"availability_text"]:
+		if button.has_meta(meta_key):
+			button.remove_meta(meta_key)
 
 func apply_operation_button_style(button: Button, op: String, bg: Color, border: Color, text_color: Color, valid: bool) -> void:
 	var normal := StyleBoxFlat.new()
@@ -1232,6 +1317,7 @@ func _on_orbit_button_pressed(button: Button) -> void:
 		play_rejected_orbit_feedback(button, op)
 		AudioManagerScript.play_orbit_rejected_haptic()
 		return
+	finish_operation_availability(button)
 	var tween := button.create_tween()
 	tween.tween_property(button, "scale", Vector2(0.90, 0.90), 0.055).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.tween_property(button, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
@@ -1240,6 +1326,7 @@ func _on_orbit_button_pressed(button: Button) -> void:
 func play_rejected_orbit_feedback(button: Button, op: String, restore_valid: bool = false) -> void:
 	if button == null or button.is_queued_for_deletion():
 		return
+	finish_operation_availability(button)
 	for meta_key in [&"rejected_color_tween", &"rejected_shake_tween"]:
 		if button.has_meta(meta_key):
 			var previous := button.get_meta(meta_key) as Tween

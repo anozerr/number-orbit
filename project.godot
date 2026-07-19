@@ -14,7 +14,8 @@ config/name="NumberOrbit"
 run/main_scene="res://scenes/main/Main.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 boot_splash/show_image=false
-config/icon="res://number-orbit-icon-light-solid.svg"
+config/icon="res://assets/app-icons/Number-Orbit-Dark.svg"
+config/macos_native_icon="res://assets/app-icons/Number-Orbit-Dark.icns"
 
 [display]
 

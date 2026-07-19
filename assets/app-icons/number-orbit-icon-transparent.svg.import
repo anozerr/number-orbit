@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c4ensv6yexj6m"
-path="res://.godot/imported/number-orbit-icon-light-solid.svg-c27d76843f31ff50d40eb88d35e226bc.ctex"
+uid="uid://clbomictesoxq"
+path="res://.godot/imported/number-orbit-icon-transparent.svg-c152bd83673635d1c6574e2f5ede32a2.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://number-orbit-icon-light-solid.svg"
-dest_files=["res://.godot/imported/number-orbit-icon-light-solid.svg-c27d76843f31ff50d40eb88d35e226bc.ctex"]
+source_file="res://assets/app-icons/number-orbit-icon-transparent.svg"
+dest_files=["res://.godot/imported/number-orbit-icon-transparent.svg-c152bd83673635d1c6574e2f5ede32a2.ctex"]
 
 [params]
 

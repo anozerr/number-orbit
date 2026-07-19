@@ -26,16 +26,18 @@ var content_width := 940.0
 # Horizontal breathing room INSIDE the scroll viewport so edge tiles / the
 # How-to card aren't clipped by the ScrollContainer's edges. The visual tile
 # grid still spans `content_width`; the scroll is just wider and the grid is
-# offset by GRID_PAD. TOP_PAD gives the first row room.
+# offset by GRID_PAD. The top pad is a transparent scroll runway: it keeps the
+# first card below the live fade at rest, then lets it dissolve gradually as the
+# user scrolls instead of switching a shader gate over a few pixels.
 const GRID_PAD := 30.0
-const TOP_PAD := 16.0
+const EDGE_FADE_PX := 56.0
+const TOP_PAD := EDGE_FADE_PX
 const LEVEL_STAR_SIZE := 42.0
 const LEVEL_STAR_SPACING := 7.0
 const LEVEL_STAR_Y_RATIO := 0.65
-# Length of the top/bottom dissolve. The scroll viewport extends this far BELOW
+# The scroll viewport extends half the shared edge dissolve BELOW
 # the unified bottom line so a row is still fully opaque AT the line and only
 # fades past it (fade completing on the line made the page look shorter).
-const SCROLL_FADE_PX := 100.0
 const LOCKED_POPUP_HEIGHT := 650.0
 # Cancel ends at y=888 in the actionable layout; 968 leaves the same deliberate
 # 80px bottom breathing room used by the popup's horizontal padding.
@@ -100,17 +102,16 @@ func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tu
 	UIStyles.apply_font(title, UIStyles.FONT_EXTRABOLD, 54, UIStyles.TEXT)
 	add_child(title)
 
-	# --- Scroll region: starts just below the header row (was top+322, which left
-	# a big empty gap between the back/settings buttons and the fade). ---
+	# --- Scroll region: starts 55px below the 127px header circles (top+74..201),
+	# giving the header deliberate breathing room. Its 56px transparent runway
+	# keeps How-to fully outside the live fade at rest. ---
 	# Scroll ends on the unified bottom line so the bottom fade sits where the
 	# operator chips end on the game screen (same bottom edge on every screen).
-	var scroll_top := top + 236.0
+	var scroll_top := top + 256.0
 	# Bottom of the visible scroll = the unified line plus HALF a fade length, so
-	# the dissolve is centred on the line (≈50% opacity there): a row is still
-	# clearly present at the line but already dissolving — a middle ground between
-	# "fully gone at the line" (page looked short) and "fully solid at the line"
-	# (page looked long).
-	var scroll_bottom := Layout.content_bottom_line(self) + SCROLL_FADE_PX * 0.5
+	# the dissolve is spatially centred on the line (≈50% opacity there): clearly
+	# present but already dissolving.
+	var scroll_bottom := Layout.content_bottom_line(self) + EDGE_FADE_PX * 0.5
 	var scroll := ScrollContainer.new()
 	scroll.position = Vector2(col.position.x - GRID_PAD, scroll_top)
 	scroll.size = Vector2(content_width + GRID_PAD * 2.0, scroll_bottom - scroll_top)
@@ -131,7 +132,9 @@ func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tu
 	for difficulty_index in range(LevelData.DIFFICULTIES.size()):
 		y = add_difficulty_section(content, difficulty_index, y, star_ratings, max_unlocked_level, tutorials_done)
 		y += 108.0
-	content.custom_minimum_size = Vector2(content_width + GRID_PAD * 2.0, y - 108.0 + 60.0)
+	# Match the bottom runway to the top one: at maximum scroll the final card
+	# stops exactly where the bottom fade begins, fully opaque and unclipped.
+	content.custom_minimum_size = Vector2(content_width + GRID_PAD * 2.0, y - 108.0 + EDGE_FADE_PX)
 
 	apply_scroll_fade(scroll)
 
@@ -142,7 +145,9 @@ func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tu
 # The fade shader sits on the ScrollContainer and every descendant opts into it
 # via use_parent_material, so the CONTENT dissolves per-fragment in screen
 # space — any gradient background shows through with no color bands (a flat
-# fade strip is visible over a non-uniform bg).
+# fade strip is visible over a non-uniform bg). Both masks stay active and use
+# the exact same EDGE_FADE_PX curve. TOP_PAD is one fade long, so How-to rests
+# fully below the mask and traverses the whole gradient before the hard clip.
 func apply_scroll_fade(scroll: ScrollContainer) -> void:
 	var mat := ShaderMaterial.new()
 	var shader := Shader.new()
@@ -151,21 +156,18 @@ shader_type canvas_item;
 
 uniform float band_top = 0.0;
 uniform float band_bottom = 1.0;
-uniform float fade_px = 100.0;
+uniform float edge_fade_px = 56.0;
 uniform float viewport_h = 1920.0;
-uniform float scroll_offset = 0.0;
-uniform float max_scroll = 100000.0;
 
 void fragment() {
 	float y = SCREEN_UV.y * viewport_h;
-	float top_fade = smoothstep(band_top, band_top + fade_px, y);
-	float bottom_fade = smoothstep(band_bottom, band_bottom - fade_px, y);
-	// Only fade an edge once content is actually scrolled past it, so the first
-	// row (How-to) is fully opaque at the very top and the last row at the bottom.
-	float top_gate = clamp(scroll_offset / fade_px, 0.0, 1.0);
-	float bottom_gate = clamp((max_scroll - scroll_offset) / fade_px, 0.0, 1.0);
-	top_fade = mix(1.0, top_fade, top_gate);
-	bottom_fade = mix(1.0, bottom_fade, bottom_gate);
+	float safe_fade_px = max(edge_fade_px, 1.0);
+	float top_progress = clamp((y - band_top) / safe_fade_px, 0.0, 1.0);
+	float bottom_progress = clamp((band_bottom - y) / safe_fade_px, 0.0, 1.0);
+	// Cubic smoothstep has zero slope at both ends, so neither the transparent
+	// edge nor the return to fully opaque content reads as a horizontal seam.
+	float top_fade = smoothstep(0.0, 1.0, top_progress);
+	float bottom_fade = smoothstep(0.0, 1.0, bottom_progress);
 	COLOR.a *= top_fade * bottom_fade;
 }
 """
@@ -173,22 +175,10 @@ void fragment() {
 	var vp := Layout.viewport_size(self)
 	mat.set_shader_parameter("band_top", scroll.position.y)
 	mat.set_shader_parameter("band_bottom", scroll.position.y + scroll.size.y)
-	mat.set_shader_parameter("fade_px", SCROLL_FADE_PX)
+	mat.set_shader_parameter("edge_fade_px", EDGE_FADE_PX)
 	mat.set_shader_parameter("viewport_h", vp.y)
-	mat.set_shader_parameter("scroll_offset", 0.0)
-	mat.set_shader_parameter("max_scroll", 100000.0)
 	scroll.material = mat
 	_use_parent_material_recursive(scroll)
-	# Drive the edge gates from the live scroll position.
-	var vbar := scroll.get_v_scroll_bar()
-	var refresh_fade := func(_v: float = 0.0) -> void:
-		if not is_instance_valid(scroll) or scroll.material == null:
-			return
-		var m := scroll.material as ShaderMaterial
-		m.set_shader_parameter("scroll_offset", float(scroll.scroll_vertical))
-		m.set_shader_parameter("max_scroll", maxf(1.0, vbar.max_value - vbar.page))
-	vbar.value_changed.connect(refresh_fade)
-	refresh_fade.call_deferred()
 
 func _use_parent_material_recursive(node: Node) -> void:
 	for child in node.get_children():
@@ -207,7 +197,6 @@ func add_tutorials_section(parent: Control, y: float, tutorial_completed: Array)
 	btn.size = Vector2(content_width, row_h)
 	btn.position = Vector2(GRID_PAD, y)
 	UIStyles.menu_button(btn)
-	UIStyles.add_press_animation(btn)
 	btn.pressed.connect(_on_level_button_pressed.bind(-1))
 	parent.add_child(btn)
 
@@ -404,17 +393,16 @@ func row_center_for_level(level_number: int) -> float:
 	var m := chip_metrics()
 	var chip: float = m["chip"]
 	var row_gap: float = m["row_gap"]
-	var tutorials_height := 8.0 + 150.0
-	var section_gap := 70.0
 	var difficulty_index := LevelData.difficulty_index_for_level(level_number)
 	var local_index := LevelData.local_level_number(level_number) - 1
-	# Bands vary in length now, so walk the preceding sections to find this one's top.
-	var section_y := tutorials_height + section_gap
+	# Mirror the actual builder geometry: top runway + How-to (268) + its gap
+	# (67), then each previous section's grid and 108px trailing gap.
+	var section_y := TOP_PAD + 268.0 + 67.0
 	for i in range(difficulty_index):
 		var rows_i := int(ceil(float(LevelData.difficulty_level_count(i)) / 3.0))
-		var height_i := 82.0 + float(rows_i) * row_gap - (row_gap - chip)
-		section_y += height_i + section_gap
-	var start_y := section_y + 82.0
+		var height_i := 93.0 + float(rows_i) * row_gap - (row_gap - chip)
+		section_y += height_i + 108.0
+	var start_y := section_y + 93.0
 	var row := int(float(local_index) / 3.0)
 	return start_y + float(row) * row_gap + chip * 0.5
 

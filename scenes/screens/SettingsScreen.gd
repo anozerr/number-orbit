@@ -73,8 +73,8 @@ func build() -> void:
 	UIStyles.apply_font(title, UIStyles.FONT_EXTRABOLD, 54, UIStyles.TEXT)
 	add_child(title)
 
-	# --- Sliders card. Top matches the Levels screen's How-to card (scroll_top
-	# 236 + TOP_PAD 16 = 252) so the Back→first-block gap is identical there. ---
+	# --- Sliders card. Keep the Settings mockup's own t+252 placement; Level
+	# Select reserves extra vertical space for its symmetric scroll-edge fade. ---
 	var card_h := 503.0
 	var sound_card := Panel.new()
 	sound_card.position = Vector2(cx, t + 252.0)

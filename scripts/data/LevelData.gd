@@ -2,7 +2,7 @@ class_name LevelData
 extends RefCounted
 
 # The map keeps its full 100-level structure. Levels 1–13 are hand-authored;
-# levels 14–100 are openable placeholders until their puzzles are designed.
+# levels 31–100 are openable placeholders until their puzzles are designed.
 const DIFFICULTIES := ["Easy", "Medium", "Hard", "Extreme", "Impossible"]
 const DIFFICULTY_COUNTS := [30, 30, 30, 9, 1]
 const LEVEL_COUNT := 100
