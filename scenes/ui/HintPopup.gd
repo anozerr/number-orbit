@@ -2,6 +2,7 @@ class_name HintPopup
 extends Control
 
 const PopupFactoryScript = preload("res://scripts/ui/PopupFactory.gd")
+const HintSolverScript = preload("res://scripts/game/HintSolver.gd")
 
 class HintMoveOutline:
 	extends Control
@@ -22,6 +23,7 @@ var current_lumens: int = 0
 var current_moves: int = 0
 var current_hint_cost: int = 0
 var cached_popup_hint_text: String = ""
+var cached_popup_target: Dictionary = {}
 var cached_popup_move_index: int = -1
 
 var overlay: ColorRect
@@ -106,6 +108,7 @@ func configure_state(moves: int, lumens: int, hint_cost: int) -> void:
 	current_hint_cost = hint_cost
 	if cached_popup_move_index != current_moves:
 		cached_popup_hint_text = ""
+		cached_popup_target.clear()
 		cached_popup_move_index = -1
 
 func layout_to_viewport(viewport_size: Vector2) -> void:
@@ -121,7 +124,7 @@ func show_prompt() -> void:
 	set_panel_height(DEFAULT_PANEL_HEIGHT)
 	reset_layout()
 	if cached_popup_move_index == current_moves and not cached_popup_hint_text.is_empty():
-		apply_result_text(cached_popup_hint_text)
+		apply_result_text(cached_popup_hint_text, cached_popup_target)
 		balance_label.text = Locale.t("hint.balance", "Balance: %d Lumens") % current_lumens
 		buy_button.visible = false
 		ad_button.visible = false
@@ -137,14 +140,14 @@ func show_prompt() -> void:
 		cancel_button.text = Locale.t("common.cancel", "Cancel")
 	show_popup_if_hidden(was_visible)
 
-func show_result(message: String, balance: int) -> void:
+func show_result(message: String, balance: int, target: Dictionary = {}) -> void:
 	var was_visible := visible
 	current_lumens = balance
-	cache_result(message, balance)
-	var has_winning_move := not parse_hint_move(message).is_empty()
+	cache_result(message, balance, target)
+	var has_winning_move := not target.is_empty()
 	set_panel_height(DEFAULT_PANEL_HEIGHT if has_winning_move else COMPACT_RESULT_PANEL_HEIGHT)
 	reset_layout()
-	apply_result_text(message)
+	apply_result_text(message, target)
 	balance_label.text = Locale.t("hint.balance", "Balance: %d Lumens") % current_lumens
 	balance_label.visible = true
 	buy_button.visible = false
@@ -161,6 +164,7 @@ func show_insufficient_balance(balance: int) -> void:
 	var was_visible := visible
 	current_lumens = balance
 	cached_popup_hint_text = ""
+	cached_popup_target.clear()
 	cached_popup_move_index = -1
 	set_panel_height(DEFAULT_PANEL_HEIGHT)
 	reset_layout()
@@ -185,9 +189,10 @@ func show_popup_if_hidden(was_visible: bool) -> void:
 	if not was_visible:
 		PopupFactoryScript.show_pop(self, panel, overlay)
 
-func cache_result(message: String, balance: int) -> void:
+func cache_result(message: String, balance: int, target: Dictionary = {}) -> void:
 	current_lumens = balance
 	cached_popup_hint_text = message
+	cached_popup_target = target.duplicate(true)
 	cached_popup_move_index = current_moves
 
 func has_cached_result() -> bool:
@@ -213,9 +218,8 @@ func set_panel_height(height: float) -> void:
 	panel.position = (size - panel.size) * 0.5
 	PopupFactoryScript.register_sheet_panel(panel)
 
-func apply_result_text(message: String) -> void:
-	var parsed := parse_hint_move(message)
-	if parsed.is_empty():
+func apply_result_text(message: String, target: Dictionary) -> void:
+	if target.is_empty():
 		body_label.text = message
 		hide_move_circle()
 		return
@@ -226,40 +230,14 @@ func apply_result_text(message: String) -> void:
 	body_label.position = Vector2(PopupFactoryScript.POPUP_PAD, 250)
 	body_label.size = Vector2(pw - PopupFactoryScript.POPUP_PAD * 2.0, 110)
 	balance_label.position = Vector2(0, 600)
-	show_move_circle(str(parsed["op"]), int(parsed["value"]))
+	show_move_circle(str(target.get("op", "")), int(target.get("value", 0)))
 
 func extract_hint_moves_left(message: String) -> String:
 	for line in message.split("\n", false):
 		var trimmed := str(line).strip_edges()
-		if trimmed.is_empty() or trimmed.begins_with("Next move:"):
+		if trimmed.is_empty() or trimmed.begins_with(HintSolverScript.NEXT_MOVE_MARKER):
 			continue
 		return trimmed
-	return ""
-
-func parse_hint_move(message: String) -> Dictionary:
-	var marker := "Next move:"
-	var idx := message.find(marker)
-	if idx < 0:
-		return {}
-	var tail := message.substr(idx + marker.length()).strip_edges()
-	var parts := tail.split(" ", false)
-	if parts.size() < 2:
-		return {}
-	var op := op_from_hint_symbol(str(parts[0]))
-	if op.is_empty():
-		return {}
-	return {"op": op, "value": int(parts[1])}
-
-func op_from_hint_symbol(symbol: String) -> String:
-	match symbol:
-		"+":
-			return "add"
-		"−", "-":
-			return "subtract"
-		"×", "x", "*":
-			return "multiply"
-		"÷", "/":
-			return "divide"
 	return ""
 
 func show_move_circle(op: String, value: int) -> void:
@@ -284,6 +262,7 @@ func hide_move_circle() -> void:
 
 func clear_cache() -> void:
 	cached_popup_hint_text = ""
+	cached_popup_target.clear()
 	cached_popup_move_index = -1
 	hide_popup()
 

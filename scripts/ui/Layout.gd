@@ -50,9 +50,6 @@ static func clear_children_for_rebuild(parent: Node) -> void:
 		parent.remove_child(child)
 		child.queue_free()
 
-static func viewport_center(node: Node) -> Vector2:
-	return viewport_size(node) * 0.5
-
 # Canvas units per physical pixel (uniform under aspect "expand").
 static func canvas_scale(node: Node) -> float:
 	var win := DisplayServer.window_get_size()
@@ -106,10 +103,6 @@ static func content_column(node: Node, max_width: float = MAX_CONTENT_WIDTH) -> 
 	var width := minf(avail, max_width)
 	var x := (vp.x - width) * 0.5
 	return Rect2(x, content_top(node), width, content_bottom(node) - content_top(node))
-
-# Left X of the centered content column of a given width.
-static func column_left(node: Node, width: float) -> float:
-	return (viewport_size(node).x - width) * 0.5
 
 # Horizontal center of the viewport (canvas units).
 static func center_x(node: Node) -> float:

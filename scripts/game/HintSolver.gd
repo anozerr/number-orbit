@@ -8,6 +8,7 @@ const LENGTH_SHIFT := PATH_CODE_BITS
 const LENGTH_MASK := 0xF
 const STARS_SHIFT := LENGTH_SHIFT + 4
 const STARS_MASK := 0x3
+const NEXT_MOVE_MARKER := "Next move:"
 
 
 static func next_hint(
@@ -30,28 +31,13 @@ static func next_hint(
 		)
 		return result
 	var target: Dictionary = result["target"] as Dictionary
-	result["text"] = "%s\nNext move: %s %d" % [
+	result["text"] = "%s\n%s %s %d" % [
 		moves_left_text(int(result["remaining_moves"])),
+		NEXT_MOVE_MARKER,
 		OperationLogic.symbol(str(target["op"])),
 		int(target["value"]),
 	]
 	return result
-
-
-static func next_hint_text(
-	current_number: int,
-	target_number: int,
-	moves_used: int,
-	orbit_items: Array,
-	data: Dictionary,
-) -> String:
-	return str(next_hint(
-		current_number,
-		target_number,
-		moves_used,
-		orbit_items,
-		data,
-	).get("text", ""))
 
 
 static func best_hint(
@@ -299,15 +285,6 @@ static func used_mask_from_remaining(remaining_items: Array, chips: Array) -> in
 
 	var all_mask := (1 << chips.size()) - 1
 	return all_mask ^ remaining_mask
-
-
-static func mask_bit_count(mask: int) -> int:
-	var count := 0
-	var remaining := mask
-	while remaining != 0:
-		remaining &= remaining - 1
-		count += 1
-	return count
 
 
 static func _no_win_result() -> Dictionary:

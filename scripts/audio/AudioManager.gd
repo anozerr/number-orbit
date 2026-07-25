@@ -32,7 +32,6 @@ enum Haptic { LIGHT, WARNING, ERROR }
 
 static var current: AudioManager
 
-var music_player: AudioStreamPlayer
 var music_players: Array[AudioStreamPlayer] = []
 var music_stream: AudioStream
 var music_fade_tween: Tween
@@ -63,7 +62,6 @@ func _ready() -> void:
 			player.finished.connect(_on_music_finished.bind(player))
 			add_child(player)
 			music_players.append(player)
-		music_player = music_players[0]
 
 func _exit_tree() -> void:
 	if music_fade_tween != null and music_fade_tween.is_valid():
@@ -210,7 +208,6 @@ func crossfade_music_loop() -> void:
 		from_player.volume_db = QUIET_DB
 		to_player.volume_db = target_music_db()
 		active_music_player_index = 1 - active_music_player_index
-		music_player = to_player
 		music_crossfading = false
 	)
 

@@ -22,6 +22,7 @@ const SHEET_START_SCALE := 0.94
 const SHEET_HOME_META := "popup_sheet_home"
 const SHEET_TWEEN_META := "popup_sheet_tween"
 const SHEET_HIDING_META := "popup_sheet_hiding"
+const SHEET_CLOSE_FALLBACK_EPSILON := 0.05
 
 static var _panel_shader: Shader
 
@@ -137,15 +138,16 @@ static func hide_sheet(root: Control, panel: Control, overlay: CanvasItem = null
 		return
 	if root.has_meta(SHEET_HIDING_META) and bool(root.get_meta(SHEET_HIDING_META)):
 		var running = root.get_meta(SHEET_TWEEN_META, null)
-		if after_hidden.is_valid():
+		var completion := _once_callback(after_hidden)
+		if completion.is_valid():
 			if running is Tween and (running as Tween).is_valid():
-				(running as Tween).finished.connect(after_hidden, CONNECT_ONE_SHOT)
-			else:
-				after_hidden.call()
+				(running as Tween).finished.connect(completion, CONNECT_ONE_SHOT)
+			_schedule_hide_fallback(root, completion)
 		return
 
 	_kill_sheet_tween(root)
 	root.set_meta(SHEET_HIDING_META, true)
+	var completion := _once_callback(after_hidden)
 	AudioManagerScript.play_popup_close()
 	var home := _sheet_home(panel)
 	var start_position := panel.position
@@ -175,9 +177,11 @@ static func hide_sheet(root: Control, panel: Control, overlay: CanvasItem = null
 		_apply_sheet_progress(panel, home, 0.0)
 		if is_instance_valid(overlay):
 			overlay.modulate.a = 0.0
-		if after_hidden.is_valid():
-			after_hidden.call()
+		if completion.is_valid():
+			completion.call()
 	)
+	if completion.is_valid():
+		_schedule_hide_fallback(root, completion)
 
 static func _sheet_home(panel: Control) -> Vector2:
 	if panel.has_meta(SHEET_HOME_META):
@@ -204,6 +208,26 @@ static func _kill_sheet_tween(root: Control) -> void:
 	if maybe_tween is Tween:
 		(maybe_tween as Tween).kill()
 	root.remove_meta(SHEET_TWEEN_META)
+
+static func _once_callback(callback: Callable) -> Callable:
+	if not callback.is_valid():
+		return Callable()
+	var state := {"called": false}
+	return func() -> void:
+		if bool(state["called"]):
+			return
+		state["called"] = true
+		if callback.is_valid():
+			callback.call()
+
+static func _schedule_hide_fallback(root: Control, completion: Callable) -> void:
+	var tree := root.get_tree() if is_instance_valid(root) else null
+	if tree == null:
+		completion.call_deferred()
+		return
+	# SceneTree owns the timer, so it survives popup rebuild/free. The normal
+	# tween signal wins; epsilon keeps the fallback safely behind that frame.
+	tree.create_timer(SHEET_CLOSE_DURATION + SHEET_CLOSE_FALLBACK_EPSILON).timeout.connect(completion, CONNECT_ONE_SHOT)
 
 static func _sheet_ease(x: float) -> float:
 	return _bezier_y_at_x(clampf(x, 0.0, 1.0), 0.28, 0.85, 0.35, 1.0)

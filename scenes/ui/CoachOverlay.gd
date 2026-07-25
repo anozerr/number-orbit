@@ -20,8 +20,6 @@ const SPOTLIGHT_FEATHER := 20.0
 # numeric extent. This calibration keeps the perceived breathing displacement
 # aligned with Double Reward and Hint without changing the purple color.
 const COACH_GLOW_EXTENT_SCALE := 1.30
-const THEME_TRANSITION_DURATION := 0.35
-const FOCUS_PING_DURATION := 0.70
 
 class CoachDimMask:
 	extends ColorRect
@@ -29,12 +27,8 @@ class CoachDimMask:
 	var holes: Array[Dictionary] = []
 	var shader_material: ShaderMaterial
 	var ring_pulse_tween: Tween
-	var theme_color_tween: Tween
-	var focus_ping_tween: Tween
 	var base_edge_tint := Color.TRANSPARENT
 	var theme_dim_color := Color.TRANSPARENT
-	var display_edge_tint := Color.TRANSPARENT
-	var display_dim_color := Color.TRANSPARENT
 	var ring_pulse_level := 0.0
 	var fade_alpha := 1.0:
 		set(value):
@@ -54,10 +48,7 @@ uniform vec4 edge_tint_color : source_color = vec4(1.0, 1.0, 1.0, 0.0);
 uniform float feather_width = 20.0;
 uniform float fade_alpha = 1.0;
 uniform float ring_alpha_multiplier = 1.0;
-uniform float ring_brightness = 1.0;
 uniform float ring_glow_size = 18.0;
-uniform float ping_scale = 1.0;
-uniform float ping_alpha = 0.0;
 uniform vec2 mask_size = vec2(1206.0, 2622.0);
 uniform int hole_count = 0;
 uniform vec4 hole_rects[16];
@@ -73,8 +64,6 @@ void fragment() {
 	float dim_amount = 1.0;
 	float ring_line = 0.0;
 	float ring_glow = 0.0;
-	float ping_line = 0.0;
-	float ping_glow = 0.0;
 	for (int i = 0; i < 16; i++) {
 		if (i >= hole_count) {
 			break;
@@ -90,23 +79,13 @@ void fragment() {
 		ring_line = max(ring_line, 1.0 - smoothstep(1.5, 2.5, abs(dist)));
 		float exterior_glow = smoothstep(1.5, 3.0, dist) * (1.0 - smoothstep(2.0, ring_glow_size, dist));
 		ring_glow = max(ring_glow, exterior_glow);
-
-		vec2 ping_half_size = half_size * ping_scale;
-		float ping_radius = radius * ping_scale;
-		float ping_dist = rounded_box_sdf(p - center, ping_half_size, ping_radius);
-		ping_line = max(ping_line, 1.0 - smoothstep(1.5, 2.5, abs(ping_dist)));
-		float ping_exterior_glow = smoothstep(1.5, 3.0, ping_dist) * (1.0 - smoothstep(2.0, 18.0, ping_dist));
-		ping_glow = max(ping_glow, ping_exterior_glow);
 	}
 	float dim_alpha = dim_color.a * dim_amount;
 	float solid_ring_alpha = ring_line * edge_tint_color.a;
 	float breathing_glow_alpha = ring_glow * 0.36 * edge_tint_color.a * ring_alpha_multiplier;
 	float edge_alpha = max(solid_ring_alpha, breathing_glow_alpha);
-	float expanding_ping = max(ping_line, ping_glow * 0.30);
-	float pulse_alpha = expanding_ping * ping_alpha;
-	float glow_alpha = clamp(max(edge_alpha, pulse_alpha), 0.0, 1.0);
-	float animated_share = clamp(max(breathing_glow_alpha, pulse_alpha) / max(glow_alpha, 0.0001), 0.0, 1.0);
-	vec3 glow_rgb = edge_tint_color.rgb * mix(1.0, ring_brightness, animated_share);
+	float glow_alpha = clamp(edge_alpha, 0.0, 1.0);
+	vec3 glow_rgb = edge_tint_color.rgb;
 	// The attention glow is the foreground layer. Composing the dim color first
 	// put the glow visually behind the coach mask and made it nearly disappear.
 	float composed_alpha = glow_alpha + dim_alpha * (1.0 - glow_alpha);
@@ -128,46 +107,33 @@ void fragment() {
 		if what == NOTIFICATION_RESIZED:
 			_update_shader()
 
-	func set_holes(next_holes: Array[Dictionary]) -> void:
+	func set_holes(next_holes: Array[Dictionary]) -> bool:
+		if _holes_are_identical(next_holes):
+			return false
 		holes = next_holes
-		clear_focus_ping()
 		_update_shader()
+		return true
+
+	func _holes_are_identical(next_holes: Array[Dictionary]) -> bool:
+		if holes.size() != next_holes.size():
+			return false
+		for i in range(holes.size()):
+			var current := holes[i]
+			var next := next_holes[i]
+			if not (current.get("rect", Rect2()) as Rect2).is_equal_approx(next.get("rect", Rect2()) as Rect2):
+				return false
+			if not is_equal_approx(float(current.get("radius", 0.0)), float(next.get("radius", 0.0))):
+				return false
+		return true
 
 	func set_theme_colors(dim: Color, edge_tint: Color) -> void:
-		if theme_color_tween != null and theme_color_tween.is_valid():
-			theme_color_tween.kill()
 		theme_dim_color = dim
 		base_edge_tint = edge_tint
 		if shader_material == null:
 			return
-		_set_display_dim_color(theme_dim_color)
-		_set_display_edge_tint(base_edge_tint)
+		shader_material.set_shader_parameter("dim_color", theme_dim_color)
+		shader_material.set_shader_parameter("edge_tint_color", base_edge_tint)
 		start_ring_pulse()
-
-	func transition_theme_colors(dim: Color, edge_tint: Color) -> void:
-		theme_dim_color = dim
-		base_edge_tint = edge_tint
-		if shader_material == null:
-			return
-		if theme_color_tween != null and theme_color_tween.is_valid():
-			theme_color_tween.kill()
-		if ring_pulse_tween != null and ring_pulse_tween.is_valid():
-			ring_pulse_tween.kill()
-		theme_color_tween = create_tween()
-		theme_color_tween.set_parallel(true)
-		theme_color_tween.tween_method(Callable(self, "_set_display_dim_color"), display_dim_color, theme_dim_color, THEME_TRANSITION_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		theme_color_tween.tween_method(Callable(self, "_set_display_edge_tint"), display_edge_tint, base_edge_tint, THEME_TRANSITION_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		theme_color_tween.finished.connect(start_ring_pulse)
-
-	func _set_display_dim_color(value: Color) -> void:
-		display_dim_color = value
-		if shader_material != null:
-			shader_material.set_shader_parameter("dim_color", display_dim_color)
-
-	func _set_display_edge_tint(value: Color) -> void:
-		display_edge_tint = value
-		if shader_material != null:
-			shader_material.set_shader_parameter("edge_tint_color", display_edge_tint)
 
 	func start_ring_pulse() -> void:
 		stop_ring_pulse()
@@ -194,27 +160,6 @@ void fragment() {
 		ring_pulse_level = clampf(level, 0.0, 1.0)
 		shader_material.set_shader_parameter("ring_alpha_multiplier", UIStyles.attention_glow_alpha(ring_pulse_level))
 		shader_material.set_shader_parameter("ring_glow_size", UIStyles.attention_glow_extent(ring_pulse_level) * COACH_GLOW_EXTENT_SCALE)
-		shader_material.set_shader_parameter("ring_brightness", 1.0)
-
-	func play_focus_ping() -> void:
-		if shader_material == null or holes.is_empty():
-			return
-		clear_focus_ping()
-		_set_focus_ping_progress(0.0)
-		focus_ping_tween = create_tween()
-		focus_ping_tween.tween_method(Callable(self, "_set_focus_ping_progress"), 0.0, 1.0, FOCUS_PING_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-
-	func clear_focus_ping() -> void:
-		if focus_ping_tween != null and focus_ping_tween.is_valid():
-			focus_ping_tween.kill()
-		if shader_material != null:
-			shader_material.set_shader_parameter("ping_alpha", 0.0)
-
-	func _set_focus_ping_progress(progress: float) -> void:
-		if shader_material == null:
-			return
-		shader_material.set_shader_parameter("ping_scale", lerpf(1.0, 1.40, progress))
-		shader_material.set_shader_parameter("ping_alpha", lerpf(0.85, 0.0, progress))
 
 	func _update_fade_alpha() -> void:
 		if shader_material == null:
@@ -249,7 +194,6 @@ var label: Label
 var eyebrow_label: Label
 var progress_dots: Array[Panel] = []
 var progress_dot_styles: Array[StyleBoxFlat] = []
-var panel_theme_tween: Tween
 var version := 0
 var steps: Array = []
 var step_index := 0
@@ -257,21 +201,14 @@ var progress_start := 0
 var progress_total := 1
 var context: Dictionary = {}
 var is_hiding := false
-var is_showing := false
 var is_transitioning_step := false
 var step_transition_tween: Tween
 var visibility_tween: Tween
-var navigation_tween: Tween
-
-const NAVIGATION_FADE_DURATION := 0.28
 
 func build() -> void:
 	if visibility_tween != null and visibility_tween.is_valid():
 		visibility_tween.kill()
-	if navigation_tween != null and navigation_tween.is_valid():
-		navigation_tween.kill()
 	visibility_tween = null
-	navigation_tween = null
 	Layout.clear_children_for_rebuild(self)
 	position = Vector2.ZERO
 	modulate.a = 1.0
@@ -343,7 +280,11 @@ func _rebuild_progress_dots(count: int) -> void:
 		progress_dot_styles.append(dot_style)
 
 func configure_context(next_context: Dictionary) -> void:
-	context = next_context.duplicate(true)
+	# GameScreen hands over a fresh geometry snapshot. Keeping that snapshot avoids
+	# recursively cloning its orbit arrays and op-chip dictionary on layout events.
+	context = next_context
+	if visible:
+		refresh_spotlight()
 
 func state_snapshot() -> Dictionary:
 	if not visible or steps.is_empty() or step_index < 0 or step_index >= steps.size():
@@ -355,27 +296,34 @@ func state_snapshot() -> Dictionary:
 		"progress_total": progress_total,
 	}
 
+func restore_snapshot(snapshot: Dictionary, animate: bool = false) -> bool:
+	if snapshot.is_empty() or dim_mask == null:
+		return false
+	var snapshot_steps: Variant = snapshot.get("steps", [])
+	if not snapshot_steps is Array or (snapshot_steps as Array).is_empty():
+		return false
+	var hint := {
+		"steps": (snapshot_steps as Array).duplicate(true),
+		"progress_start": int(snapshot.get("progress_start", 0)),
+		"progress_total": int(snapshot.get("progress_total", 1)),
+	}
+	var restore_step := clampi(int(snapshot.get("step_index", 0)), 0, (snapshot_steps as Array).size() - 1)
+	show_hint(hint, animate, restore_step)
+	return true
+
 func layout_to_viewport(viewport_size: Vector2) -> void:
 	size = viewport_size
 	if dim_mask != null:
 		dim_mask.size = viewport_size
 
-func refresh_theme() -> void:
-	if dim_mask != null:
-		dim_mask.transition_theme_colors(dim_color(), edge_tint_color())
-	_transition_panel_theme()
-
-func show_hint(coach_hint: Dictionary, entrance_delay: float = 0.0) -> void:
+func show_hint(coach_hint: Dictionary, animate: bool = true, initial_step: int = 0) -> void:
 	if dim_mask == null:
 		return
 	if visibility_tween != null and visibility_tween.is_valid():
 		visibility_tween.kill()
-	if navigation_tween != null and navigation_tween.is_valid():
-		navigation_tween.kill()
-	navigation_tween = null
+	visibility_tween = null
 	version += 1
 	is_hiding = false
-	is_showing = true
 	is_transitioning_step = false
 	if step_transition_tween != null and step_transition_tween.is_valid():
 		step_transition_tween.kill()
@@ -392,7 +340,7 @@ func show_hint(coach_hint: Dictionary, entrance_delay: float = 0.0) -> void:
 			steps.append(step)
 	else:
 		steps.append(coach_hint)
-	step_index = 0
+	step_index = clampi(initial_step, 0, maxi(steps.size() - 1, 0))
 	progress_start = maxi(0, int(coach_hint.get("progress_start", 0)))
 	progress_total = maxi(1, int(coach_hint.get("progress_total", progress_start + steps.size())))
 	_rebuild_progress_dots(progress_total)
@@ -404,33 +352,24 @@ func show_hint(coach_hint: Dictionary, entrance_delay: float = 0.0) -> void:
 	call_deferred("_refresh_first_visible_step", layout_version)
 	showing_started.emit()
 	var show_version := version
+	if not animate:
+		panel.modulate.a = 1.0
+		panel.scale = Vector2.ONE
+		dim_mask.fade_alpha = 1.0
+		return
 	visibility_tween = create_tween()
 	var tween := visibility_tween
-	if entrance_delay > 0.0:
-		tween.tween_interval(entrance_delay)
 	tween.tween_property(panel, "modulate:a", 1.0, 0.24).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.parallel().tween_property(panel, "scale", Vector2.ONE, 0.24).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.parallel().tween_property(dim_mask, "fade_alpha", 1.0, 0.28).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.finished.connect(func() -> void:
 		if show_version == version:
-			is_showing = false
 			visibility_tween = null
-			_play_focus_ping()
 	)
 
-func fade_for_navigation() -> void:
-	if not visible:
-		return
-	if navigation_tween != null and navigation_tween.is_valid():
-		navigation_tween.kill()
-	navigation_tween = create_tween()
-	var tween := navigation_tween
-	tween.tween_property(self, "modulate:a", 0.0, NAVIGATION_FADE_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	await tween.finished
-	if navigation_tween == tween:
-		navigation_tween = null
-		if dim_mask != null:
-			dim_mask.stop_ring_pulse()
+func prepare_for_screen_navigation() -> void:
+	if dim_mask != null:
+		dim_mask.stop_ring_pulse()
 
 func apply_step() -> void:
 	if step_index < 0 or step_index >= steps.size():
@@ -452,6 +391,8 @@ func apply_step() -> void:
 func _refresh_first_visible_step(check_version: int) -> void:
 	if check_version != version or not visible or step_index < 0 or step_index >= steps.size():
 		return
+	# This deferred pass re-runs apply_step() to refresh shaped text/layout for the
+	# already-applied step (works around a first-step stale shaped-text cache).
 	apply_step()
 	label.visible = true
 	label.modulate = Color.WHITE
@@ -469,6 +410,20 @@ func refresh_spotlight() -> void:
 		dim_mask.set_holes(holes_for_area(area, rect))
 	if panel != null:
 		panel.position = panel_position_for_rect(rect)
+
+func moving_orbit_area() -> String:
+	var area := active_area()
+	return area if area == "orbit_buttons" or area == "invalid_orbit" else ""
+
+func refresh_orbit_spotlight(orbit_rects: Array[Rect2]) -> void:
+	var area := moving_orbit_area()
+	if area == "orbit_buttons":
+		context["orbit_valid_rects"] = orbit_rects
+	elif area == "invalid_orbit":
+		context["orbit_invalid_rects"] = orbit_rects
+	else:
+		return
+	refresh_spotlight()
 
 func layout_panel(text: String) -> void:
 	var inner_w := PANEL_WIDTH - PANEL_PAD_X * 2.0
@@ -568,27 +523,6 @@ func edge_tint_color() -> Color:
 	color.a = 0.7 if UIStyles.is_dark() else 0.65
 	return color
 
-func _transition_panel_theme() -> void:
-	if panel == null or label == null or eyebrow_label == null:
-		return
-	if panel_theme_tween != null and panel_theme_tween.is_valid():
-		panel_theme_tween.kill()
-	# Theme changes are already screen-crossfaded by Main; rebuilding the exact
-	# PopupFactory surface here keeps this card pixel-identical to regular popups.
-	PopupFactoryScript.apply_panel_glass(panel)
-	panel_theme_tween = create_tween()
-	panel_theme_tween.set_parallel(true)
-	panel_theme_tween.tween_property(eyebrow_label, "self_modulate", UIStyles.PURPLE, THEME_TRANSITION_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	panel_theme_tween.tween_property(label, "self_modulate", UIStyles.TEXT, THEME_TRANSITION_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	for i in range(progress_dot_styles.size()):
-		var active_index := clampi(progress_start + step_index, 0, progress_total - 1)
-		var target := UIStyles.PURPLE if i == active_index else UIStyles.COACH_DOT_INACTIVE
-		panel_theme_tween.tween_property(progress_dot_styles[i], "bg_color", target, THEME_TRANSITION_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-
-func _play_focus_ping() -> void:
-	if dim_mask != null:
-		dim_mask.play_focus_ping()
-
 func holes_for_area(area: String, fallback: Rect2) -> Array[Dictionary]:
 	var holes: Array[Dictionary] = []
 	match area:
@@ -659,7 +593,6 @@ func transition_to_step(new_index: int) -> void:
 	await fade_in.finished
 	if transition_version == version:
 		is_transitioning_step = false
-		_play_focus_ping()
 
 func fade_out(check_version: int) -> void:
 	if visibility_tween != null and visibility_tween.is_valid():
@@ -677,7 +610,6 @@ func _finish_fade_out(check_version: int, fade: Tween) -> void:
 	if check_version == version:
 		visible = false
 		is_hiding = false
-		is_showing = false
 		if dim_mask != null:
 			dim_mask.stop_ring_pulse()
 		modulate.a = 1.0
@@ -698,13 +630,11 @@ func hide_hint() -> void:
 		step_transition_tween.kill()
 	if visible:
 		is_hiding = true
-		is_showing = false
 		hiding_started.emit()
 		fade_out(version)
 	else:
 		visible = false
 		is_hiding = false
-		is_showing = false
 		if dim_mask != null:
 			dim_mask.stop_ring_pulse()
 

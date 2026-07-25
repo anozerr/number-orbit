@@ -5,6 +5,7 @@ const OperationLegendScene = preload("res://scenes/ui/OperationLegend.tscn")
 const HintPopupScript = preload("res://scenes/ui/HintPopup.gd")
 const CoachOverlayScript = preload("res://scenes/ui/CoachOverlay.gd")
 const AudioManagerScript = preload("res://scripts/audio/AudioManager.gd")
+const GameViewStateScript = preload("res://scripts/game/GameViewState.gd")
 
 signal back_pressed
 signal settings_pressed
@@ -76,7 +77,6 @@ const HINT_REVEAL_GROW := 0.48
 const HINT_REVEAL_SETTLE := 0.42
 const ACTION_BUTTON_Y := 1518.0
 const ACTION_BUTTON_HEIGHT := 174.0
-const LEGEND_Y := 1626.0
 const CENTER_CIRCLE_DIAMETER := 335
 const CENTER_CIRCLE_RADIUS := CENTER_CIRCLE_DIAMETER * 0.5
 
@@ -107,13 +107,14 @@ var lumens_badge_label: Label
 var restart_button: Button
 var back_button: Button
 var settings_button: Button
-var hint_popup: Control
+var hint_popup: HintPopup
 var operation_legend: OperationLegend
 var orbit: Node2D
 var center_circle_texture: Texture2D
 var orbit_angle := 0.0
 var orbit_spin_factor := 1.0
 var orbit_spin_tween: Tween
+var last_coach_orbit_area := ""
 var last_center_number: int = -999999
 var level_failed: bool = false
 var current_number_value: int = 0
@@ -124,12 +125,10 @@ var current_target_value: int = 0
 var current_star_mode := ""
 var current_star_bands: Array = []
 var current_is_tutorial := false
-var current_is_placeholder := false
-var previous_failed_state := false
 var _hint_dimmed := false
 var _hint_dim_progress := 0.0
 var tutorial_help_text_current := ""
-var coach_overlay: Control
+var coach_overlay: CoachOverlay
 var info_line_error_state: Variant = null
 # --- Info-line captions: every message rests centered in the readable lane.
 # Temporary captions fade in, stay briefly, then fade back to the default. ---
@@ -144,7 +143,11 @@ var hint_highlight_item_id := ""
 var hint_highlight_tween: Tween
 var hint_highlight_strength := 0.0
 var skip_orbit_entrance_once := false
-var preserve_coach_during_next_configure := false
+# Lead-in before the orbit chips pop in. Set by Main to the screen-crossfade
+# duration on a fresh-level entry so the ripple starts as the screen settles,
+# not on top of it. Consumed (reset to 0) each set_orbit_items.
+var orbit_entrance_delay := 0.0
+var pending_coach_snapshot: Dictionary = {}
 
 func _ready() -> void:
 	build()
@@ -223,12 +226,13 @@ func _apply_layout() -> void:
 	if hint_popup != null:
 		hint_popup.layout_to_viewport(vp)
 	if coach_overlay != null:
-		coach_overlay.configure_context(coach_context())
 		coach_overlay.layout_to_viewport(vp)
+		coach_overlay.configure_context(coach_context())
 	queue_redraw()
 
 func build() -> void:
 	clear_hint_highlight()
+	last_coach_orbit_area = ""
 	Layout.clear_children_for_rebuild(self)
 	# Same fill as the primary Play/Continue button (mockup parity): diagonal
 	# PRIMARY_TOP→PRIMARY_BOTTOM gradient.
@@ -417,7 +421,7 @@ void fragment() {
 	hint_button.pressed.connect(func():
 		if current_is_tutorial:
 			hint_requested.emit()
-		elif hint_popup != null and hint_popup.has_method("has_cached_result") and hint_popup.has_cached_result():
+		elif hint_popup != null and hint_popup.has_cached_result():
 			hint_requested.emit()
 		elif current_lumens < current_hint_cost:
 			hint_requested.emit()
@@ -467,9 +471,9 @@ void fragment() {
 	coach_overlay = CoachOverlayScript.new()
 	add_child(coach_overlay)
 	coach_overlay.build()
-	coach_overlay.connect("showing_started", _on_coach_showing_started)
-	coach_overlay.connect("hiding_started", _on_coach_hiding_started)
-	coach_overlay.connect("hiding_finished", _on_coach_hiding_finished)
+	coach_overlay.showing_started.connect(_on_coach_showing_started)
+	coach_overlay.hiding_started.connect(_on_coach_hiding_started)
+	coach_overlay.hiding_finished.connect(_on_coach_hiding_finished)
 	_apply_layout()
 	# После ребилда (смена темы/языка) сразу восстанавливаем «серое» состояние подсказки
 	# и бейджа, если были в тупике — иначе новый оверлей бейджа рождается прозрачным и на
@@ -477,40 +481,39 @@ void fragment() {
 	if _hint_dimmed:
 		_apply_hint_dim(1.0)
 
-func configure(title_text: String, current_number: int, target_number: int, moves: int, star_mode: String, star_bands: Array, orbit_items: Array, allowed_ops: Array, failed: bool, lumens: int, hint_cost: int, tutorial: bool = false, tutorial_help: String = "", coach_hint: Dictionary = {}, placeholder: bool = false) -> void:
+func configure(view: GameViewStateScript) -> void:
 	var previous_moves := current_moves
-	if moves != previous_moves:
+	if view.moves != previous_moves:
 		clear_hint_highlight()
-	level_failed = failed
-	current_number_value = current_number
-	current_lumens = lumens
-	current_hint_cost = hint_cost
-	current_moves = moves
-	current_target_value = target_number
-	current_star_mode = star_mode
-	current_star_bands = star_bands.duplicate(true)
-	current_is_tutorial = tutorial
-	current_is_placeholder = placeholder
+	level_failed = view.failed
+	current_number_value = view.current_number
+	current_lumens = view.lumens
+	current_hint_cost = view.hint_cost
+	current_moves = view.moves
+	current_target_value = view.target_number
+	current_star_mode = view.star_mode
+	current_star_bands = view.star_bands.duplicate(true)
+	current_is_tutorial = view.tutorial
 	if hint_popup != null:
 		hint_popup.configure_state(current_moves, current_lumens, current_hint_cost)
-	level_label.text = title_text
-	goal_label.text = "?" if placeholder else str(target_number)
+	level_label.text = view.title_text
+	goal_label.text = "?" if view.placeholder else str(view.target_number)
 	tutorial_help_text_current = (
 		Locale.t("game.placeholder", "This level is being prepared.")
-		if placeholder
-		else fail_comment_text() if failed
-		else tutorial_help if tutorial
-		else progress_comment_text(moves)
+		if view.placeholder
+		else fail_comment_text() if view.failed
+		else view.tutorial_help if view.tutorial
+		else progress_comment_text(view.moves)
 	)
 	# The info row carries live gameplay context and remains visible in tutorials,
 	# including while the coach overlay is presenting a step.
 	info_panel.visible = true
 	tutorial_help_label.visible = true
-	set_info_default(tutorial_help_text_current, failed)
+	set_info_default(tutorial_help_text_current, view.failed)
 	# Center number: shrink the font for big values or a runaway multiply chain
 	# so the digits stay inside the circle instead of
 	# spilling past its edge. Small numbers keep the full 101px.
-	var center_text := "?" if placeholder else str(current_number)
+	var center_text := "?" if view.placeholder else str(view.current_number)
 	var center_font := 101
 	while center_font > 44 and UIStyles.FONT_EXTRABOLD.get_string_size(center_text, HORIZONTAL_ALIGNMENT_CENTER, -1, center_font).x > CENTER_CIRCLE_DIAMETER - 50.0:
 		center_font -= 3
@@ -518,70 +521,58 @@ func configure(title_text: String, current_number: int, target_number: int, move
 	center_label.text = center_text
 	# 4.4: pop только на реальном ходу (moves выросли), а не при ОТКРЫТИИ уровня
 	# (свежая загрузка / сентинел / возврат из меню — там moves не растут).
-	if last_center_number != current_number and moves > previous_moves:
+	if last_center_number != view.current_number and view.moves > previous_moves:
 		pop_center_number()
-	last_center_number = current_number
-	moves_count_label.text = Locale.t("game.moves", "MOVES %d") % moves
+	last_center_number = view.current_number
+	moves_count_label.text = Locale.t("game.moves", "MOVES %d") % view.moves
 	# Tutorials still count real taps even though they award no stars. Keep the
 	# MOVES half of the status pill visible so that relationship is explicit.
 	moves_count_label.visible = true
 	moves_bg.visible = true
 	goal_label.size = TARGET_BUBBLE_SIZE
-	operation_legend.configure_ops(allowed_ops)
-	operation_legend.visible = not placeholder
+	operation_legend.configure_ops(view.allowed_ops)
+	operation_legend.visible = not view.placeholder
 	hint_button.visible = true
 	# A hint is useless both in a dead end and in an unfinished placeholder.
-	hint_button.disabled = (level_failed or placeholder) and not tutorial
-	update_hint_button_label(lumens)
+	hint_button.disabled = (level_failed or view.placeholder) and not view.tutorial
+	update_hint_button_label(view.lumens)
 	_apply_layout()
 	# Плавно гасим подсказку (с бейджем) при входе в тупик и возвращаем при рестарте.
 	# Рестарт-кнопка НЕ подпрыгивает — и так очевидно, что жать её.
-	var should_dim_hint := (level_failed or placeholder) and not current_is_tutorial
+	var should_dim_hint := (level_failed or view.placeholder) and not current_is_tutorial
 	# Анимируем затемнение ТОЛЬКО когда состояние сменилось ХОДОМ (moves изменились). На
 	# ре-показе экрана (возврат из настроек/меню) — сразу, без «серения» и мигания.
 	if should_dim_hint != _hint_dimmed:
-		set_hint_dimmed(should_dim_hint, moves != previous_moves)
+		set_hint_dimmed(should_dim_hint, view.moves != previous_moves)
 	elif should_dim_hint:
 		set_hint_dimmed(should_dim_hint, false)
 	_hint_dimmed = should_dim_hint
-	previous_failed_state = level_failed
-	set_orbit_items(orbit_items)
-	if preserve_coach_during_next_configure:
-		preserve_coach_during_next_configure = false
-	elif tutorial and not coach_hint.is_empty():
+	set_orbit_items(view.orbit_items)
+	var restored_coach := false
+	if not pending_coach_snapshot.is_empty():
+		var snapshot := pending_coach_snapshot.duplicate(true)
+		pending_coach_snapshot.clear()
 		coach_overlay.configure_context(coach_context())
-		coach_overlay.show_hint(coach_hint)
-	else:
+		restored_coach = coach_overlay.restore_snapshot(snapshot, false)
+	if not restored_coach and view.tutorial and not view.coach_hint.is_empty():
+		coach_overlay.configure_context(coach_context())
+		coach_overlay.show_hint(view.coach_hint)
+	elif not restored_coach:
 		coach_overlay.hide_hint()
 	info_panel.visible = true
 	queue_redraw()
 
 func active_coach_snapshot() -> Dictionary:
-	if coach_overlay == null or not coach_overlay.has_method("state_snapshot"):
+	if coach_overlay == null:
 		return {}
-	return coach_overlay.state_snapshot() as Dictionary
+	return coach_overlay.state_snapshot()
 
-func prepare_coach_restore() -> void:
-	preserve_coach_during_next_configure = true
+func prepare_coach_snapshot_restore(snapshot: Dictionary) -> void:
+	pending_coach_snapshot = snapshot.duplicate(true)
 
-func fade_active_coach_for_navigation() -> void:
+func prepare_coach_for_screen_navigation() -> void:
 	if coach_overlay != null and coach_overlay.visible:
-		await coach_overlay.fade_for_navigation()
-
-func queue_coach_snapshot(snapshot: Dictionary, entrance_delay: float = 0.0) -> void:
-	if snapshot.is_empty() or coach_overlay == null:
-		return
-	var hint := {
-		"steps": (snapshot.get("steps", []) as Array).duplicate(true),
-		"progress_start": int(snapshot.get("progress_start", 0)),
-		"progress_total": int(snapshot.get("progress_total", 1)),
-	}
-	coach_overlay.configure_context(coach_context())
-	coach_overlay.show_hint(hint, entrance_delay)
-	var restore_step := maxi(0, int(snapshot.get("step_index", 0)))
-	if restore_step > 0 and restore_step < coach_overlay.steps.size():
-		coach_overlay.step_index = restore_step
-		coach_overlay.apply_step()
+		coach_overlay.prepare_for_screen_navigation()
 
 func pop_center_number() -> void:
 	UIStyles.pop_scale(center_label, 1.08, 0.08, 0.14)
@@ -1108,7 +1099,7 @@ func set_orbit_items(items: Array) -> void:
 		if is_new and animate_new_items:
 			btn.position = orbit_target_position(btn) - btn.size * 0.5
 			var pop_tween := btn.create_tween()
-			pop_tween.tween_interval(float(i) * 0.04)
+			pop_tween.tween_interval(orbit_entrance_delay + float(i) * 0.04)
 			pop_tween.tween_property(btn, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 			pop_tween.parallel().tween_property(btn, "modulate:a", 1.0, 0.18).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	for child in orbit.get_children():
@@ -1116,6 +1107,7 @@ func set_orbit_items(items: Array) -> void:
 		if btn != null and not desired_ids.has(str(btn.get_meta("id"))):
 			animate_orbit_disappear(btn)
 	skip_orbit_entrance_once = false
+	orbit_entrance_delay = 0.0
 	update_orbit_positions(false)
 
 func restore_orbit_without_entrance_animation() -> void:
@@ -1127,6 +1119,8 @@ const ORBIT_DISAPPEAR_GROW := 0.07
 const ORBIT_DISAPPEAR_FADE := 0.14
 const ORBIT_AVAILABILITY_DURATION := 0.26
 const ORBIT_REENABLE_PULSE := 0.03
+# Per-chip stagger when the whole orbit is dismissed on level advance (ripple-out).
+const ORBIT_DISMISS_STAGGER := 0.02
 # Ввод разблокируется, когда убранный спутник практически исчез (он `disabled` сразу,
 # так что даблтап по нему невозможен), а оставшиеся уже перетекают — «доска готова».
 const ORBIT_MOVE_SETTLE_TIME := ORBIT_DISAPPEAR_FADE
@@ -1154,6 +1148,35 @@ func animate_orbit_disappear(button: Button) -> void:
 		button.modulate.a = 1.0
 		button.scale = Vector2.ONE
 		button.set_meta("popping", false)
+	)
+
+# Gracefully shrink/fade the whole current orbit away (ripple-out), then fire
+# `after_done`. Used on level advance so the old board leaves smoothly instead of
+# being freed in a single frame; the chips keep spinning as they shrink (the same
+# way animate_orbit_disappear coexists with the spin during a normal move).
+func dismiss_orbit(after_done: Callable = Callable()) -> void:
+	var buttons: Array[Button] = []
+	if orbit != null:
+		for child in orbit.get_children():
+			var btn := child as Button
+			if btn != null and not btn.is_queued_for_deletion() and btn.visible and not bool(btn.get_meta("popping", false)):
+				buttons.append(btn)
+	if buttons.is_empty():
+		if after_done.is_valid():
+			after_done.call()
+		return
+	var last_end := 0.0
+	for i in range(buttons.size()):
+		var delay := float(i) * ORBIT_DISMISS_STAGGER
+		var starter := create_tween()
+		starter.tween_interval(delay)
+		starter.tween_callback(animate_orbit_disappear.bind(buttons[i]))
+		last_end = maxf(last_end, delay + ORBIT_DISAPPEAR_GROW + ORBIT_DISAPPEAR_FADE)
+	var done := create_tween()
+	done.tween_interval(last_end)
+	done.tween_callback(func() -> void:
+		if after_done.is_valid():
+			after_done.call()
 	)
 
 func find_orbit_button(item_id: String) -> Button:
@@ -1395,14 +1418,18 @@ func set_rejected_orbit_offset(button: Button, offset: Vector2) -> void:
 func reveal_hint_result(message: String, balance: int, target: Dictionary) -> void:
 	current_lumens = balance
 	update_lumens_badge(balance)
-	if hint_popup != null and hint_popup.has_method("cache_result"):
-		hint_popup.cache_result(message, balance)
+	if hint_popup != null:
+		hint_popup.cache_result(message, balance, target)
 	var reveal := func() -> void:
 		highlight_hint_target(target)
 	if hint_popup != null and hint_popup.visible:
 		hint_popup.hide_popup(reveal)
 	else:
 		reveal.call()
+
+func restore_hint_result_cache(message: String, balance: int, target: Dictionary) -> void:
+	if hint_popup != null:
+		hint_popup.cache_result(message, balance, target)
 
 func highlight_hint_target(target: Dictionary) -> void:
 	if target.is_empty():
@@ -1525,10 +1552,14 @@ func _process(delta: float) -> void:
 		return
 	var speed := 0.25
 	orbit_angle += delta * speed * orbit_spin_factor
-	update_orbit_positions(false)
+	var orbit_moved := update_orbit_positions(false)
 	if coach_overlay != null and coach_overlay.visible:
-		coach_overlay.configure_context(coach_context())
-		coach_overlay.refresh_spotlight()
+		var moving_area := coach_overlay.moving_orbit_area()
+		if not moving_area.is_empty() and (orbit_moved or moving_area != last_coach_orbit_area):
+			coach_overlay.refresh_orbit_spotlight(visible_orbit_button_rects(moving_area == "invalid_orbit"))
+		last_coach_orbit_area = moving_area
+	else:
+		last_coach_orbit_area = ""
 	queue_redraw()
 
 func _on_coach_showing_started() -> void:
@@ -1578,11 +1609,13 @@ func _draw() -> void:
 	ring_color.a = 0.55
 	draw_arc(screen_center, orbit_radius, 0.0, TAU, 200, ring_color, 6.0, true)
 
-func update_orbit_positions(snap: bool = false) -> void:
+func update_orbit_positions(snap: bool = false) -> bool:
+	var moved := false
 	for i in range(orbit.get_child_count()):
 		var b := orbit.get_child(i) as Button
 		if b == null or b.is_queued_for_deletion() or not b.visible:
 			continue
+		var previous_position := b.position
 		var target := orbit_target_position(b) - b.size * 0.5
 		if snap:
 			b.set_meta("orbit_display_angle", float(b.get_meta("orbit_target_angle", orbit_angle_for_button(b))))
@@ -1599,9 +1632,12 @@ func update_orbit_positions(snap: bool = false) -> void:
 				else:
 					current_angle += clockwise_delta * 0.16
 			else:
-				current_angle = current_angle + angle_difference(current_angle, target_angle) * 0.115
+				var shortest_delta := angle_difference(current_angle, target_angle)
+				current_angle = target_angle if absf(shortest_delta) < 0.002 else current_angle + shortest_delta * 0.115
 			b.set_meta("orbit_display_angle", current_angle)
 			b.position = orbit_position_for_angle(current_angle) - b.size * 0.5 + (b.get_meta("rejected_offset", Vector2.ZERO) as Vector2)
+		moved = moved or not previous_position.is_equal_approx(b.position)
+	return moved
 
 func orbit_target_position(button: Button) -> Vector2:
 	return orbit_position_for_angle(orbit_angle_for_button(button))
@@ -1625,10 +1661,6 @@ func clear_orbit_buttons() -> void:
 	for child in orbit.get_children().duplicate():
 		orbit.remove_child(child)
 		child.free()
-
-func show_hint_popup() -> void:
-	if hint_popup != null:
-		hint_popup.show_prompt()
 
 func show_hint_result(message: String, balance: int) -> void:
 	current_lumens = balance
@@ -1697,16 +1729,8 @@ func visible_orbit_button_rects(only_invalid: bool) -> Array[Rect2]:
 		rects.append(Rect2(btn.position, btn.size))
 	return rects
 
-func combined_rect(rects: Array[Rect2], fallback: Rect2) -> Rect2:
-	if rects.is_empty():
-		return fallback
-	var result := rects[0]
-	for i in range(1, rects.size()):
-		result = result.merge(rects[i])
-	return result
-
 func operation_card_rect(index: int) -> Rect2:
-	if operation_legend != null and operation_legend.has_method("card_rect"):
+	if operation_legend != null:
 		var local_rect: Rect2 = operation_legend.card_rect(index)
 		return Rect2(operation_legend.position + local_rect.position, local_rect.size)
 	return Rect2(operation_legend.position, Vector2(304, 74))

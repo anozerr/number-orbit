@@ -10,7 +10,6 @@ const BUTTON_GAP := 40.0
 
 var play_button: Button
 var levels_button: Button
-var levels_icon: TextureRect
 var logo_center := Vector2.ZERO
 var logo_time := 0.0
 

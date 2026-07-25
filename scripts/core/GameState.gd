@@ -5,6 +5,9 @@ extends RefCounted
 # level ids. Existing level progress is reset once; user preferences survive.
 const SAVE_VERSION := 4
 const SAVE_PATH := "user://number_orbit_save.json"
+const SAVE_TEMP_SUFFIX := ".tmp"
+const SAVE_BACKUP_SUFFIX := ".bak"
+const SAVE_CORRUPT_SUFFIX := ".corrupt"
 const STARTING_LUMENS := 100
 const REPLAY_HINT_COST := 10
 const FINAL_REWARD := 500
@@ -36,7 +39,6 @@ var sound_volume: int = 80
 var haptics_enabled: bool = true
 var theme: String = "light"
 var language: String = "en"
-var full_reset_migration_applied := false
 
 var _save_path: String = SAVE_PATH
 
@@ -82,7 +84,6 @@ func _reset_all_persistent_defaults() -> void:
 		tutorial_completed[i] = false
 	if not levels.is_empty():
 		load_level(1)
-	full_reset_migration_applied = false
 
 func load_level(level_number: int) -> Dictionary:
 	current_level = int(clamp(level_number, 1, levels.size()))
@@ -219,7 +220,30 @@ func clear_cached_hint() -> void:
 	cached_hint_text = ""
 	cached_hint_target = {}
 
-func save_progress() -> void:
+func preferences_to_dict() -> Dictionary:
+	return {
+		"music_volume": music_volume,
+		"sound_volume": sound_volume,
+		"haptics_enabled": haptics_enabled,
+		"theme": theme,
+		"language": language
+	}
+
+func apply_preferences(data: Dictionary) -> void:
+	music_volume = int(clamp(int(data.get("music_volume", music_volume)), 0, 100))
+	sound_volume = int(clamp(int(data.get("sound_volume", sound_volume)), 0, 100))
+	haptics_enabled = bool(data.get("haptics_enabled", haptics_enabled))
+	theme = "dark" if str(data.get("theme", theme)) == "dark" else "light"
+	language = str(data.get("language", language))
+
+# Reset only progression/economy state. Persistence remains the caller's
+# responsibility so a reset can still be composed with its surrounding UI flow.
+func reset_progress_preserving_preferences() -> void:
+	var preferences := preferences_to_dict()
+	_reset_all_persistent_defaults()
+	apply_preferences(preferences)
+
+func save_progress() -> bool:
 	var data := {
 		"save_version": SAVE_VERSION,
 		"current_level_id": current_level_id(),
@@ -227,38 +251,81 @@ func save_progress() -> void:
 		"stars_by_level_id": stars_by_level_id(),
 		"tutorial_completed_by_id": tutorial_completed_by_id(),
 		"lumens": lumens,
-		"has_played": has_played,
-		"music_volume": music_volume,
-		"sound_volume": sound_volume,
-		"haptics_enabled": haptics_enabled,
-		"theme": theme,
-		"language": language
+		"has_played": has_played
 	}
-	var file := FileAccess.open(_save_path, FileAccess.WRITE)
-	if file == null:
-		return
-	file.store_string(JSON.stringify(data))
-	file.close()
+	data.merge(preferences_to_dict())
+	var temp_path := _save_path + SAVE_TEMP_SUFFIX
+	var backup_path := _save_path + SAVE_BACKUP_SUFFIX
+	var corrupt_path := _save_path + SAVE_CORRUPT_SUFFIX
+	if not _remove_file_if_present(temp_path):
+		return false
+	if not _write_save_candidate(temp_path, JSON.stringify(data)):
+		_remove_file_if_present(temp_path)
+		return false
+
+	# Only a validated primary may replace the last known-good backup. If the
+	# primary is corrupt, keep the backup intact and move the bad file through a
+	# separate quarantine path while the prepared temp file is installed.
+	var primary := _read_save_candidate(_save_path)
+	if bool(primary["exists"]):
+		if bool(primary["valid"]):
+			if not _remove_file_if_present(backup_path):
+				_remove_file_if_present(temp_path)
+				return false
+			if not _rename_file(_save_path, backup_path):
+				_remove_file_if_present(temp_path)
+				return false
+			if not _rename_file(temp_path, _save_path):
+				# A failed install must leave either the restored primary or the
+				# backup available for the next launch.
+				_rename_file(backup_path, _save_path)
+				_remove_file_if_present(temp_path)
+				return false
+		else:
+			if not _remove_file_if_present(corrupt_path):
+				_remove_file_if_present(temp_path)
+				return false
+			if not _rename_file(_save_path, corrupt_path):
+				_remove_file_if_present(temp_path)
+				return false
+			if not _rename_file(temp_path, _save_path):
+				_rename_file(corrupt_path, _save_path)
+				_remove_file_if_present(temp_path)
+				return false
+			# Preserve the malformed bytes for diagnosis. A later corrupt primary
+			# replaces this evidence only after the new temp candidate is valid.
+	else:
+		if not _rename_file(temp_path, _save_path):
+			_remove_file_if_present(temp_path)
+			return false
+	return true
 
 func load_progress() -> void:
-	full_reset_migration_applied = false
-	if not FileAccess.file_exists(_save_path):
+	var primary := _read_save_candidate(_save_path)
+	if bool(primary["valid"]):
+		_load_valid_save(primary["data"] as Dictionary)
 		return
-	var file := FileAccess.open(_save_path, FileAccess.READ)
-	if file == null:
+
+	var backup := _read_save_candidate(_save_path + SAVE_BACKUP_SUFFIX)
+	if bool(backup["valid"]):
+		_load_valid_save(backup["data"] as Dictionary)
 		return
-	var save_text := file.get_as_text()
-	file.close()
-	var json := JSON.new()
-	var parse_error := json.parse(save_text)
-	if parse_error != OK:
-		_apply_full_reset_migration()
+
+	# A temp file is never allowed to outrank a committed primary or backup. It
+	# is only a last-resort recovery for an interrupted first save (or for a
+	# transaction whose older copies are both unavailable).
+	var temp := _read_save_candidate(_save_path + SAVE_TEMP_SUFFIX)
+	if bool(temp["valid"]):
+		_load_valid_save(temp["data"] as Dictionary)
 		return
-	var parsed: Variant = json.data
-	if typeof(parsed) != TYPE_DICTIONARY:
-		_apply_full_reset_migration()
-		return
-	var data: Dictionary = parsed as Dictionary
+
+	# setup() has already established safe in-memory defaults. In particular, do
+	# not turn malformed on-disk data into a migration and overwrite the evidence
+	# with those defaults.
+	if bool(primary["exists"]) or bool(backup["exists"]) or bool(temp["exists"]):
+		push_warning("No valid Number Orbit save candidate could be loaded")
+
+func _load_valid_save(data: Dictionary) -> void:
 	var stored_version := int(data.get("save_version", 1))
 	# The older v9 migration remains a full reset. A v3 save already has the
 	# current schema, so only its obsolete level progress/economy is reset.
@@ -270,30 +337,102 @@ func load_progress() -> void:
 		return
 	load_current_save(data)
 
+func _write_save_candidate(path: String, save_text: String) -> bool:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		return false
+	file.store_string(save_text)
+	file.flush()
+	var write_error := file.get_error()
+	file.close()
+	if write_error != OK:
+		return false
+	return bool(_read_save_candidate(path)["valid"])
+
+func _read_save_candidate(path: String) -> Dictionary:
+	var result := {
+		"exists": FileAccess.file_exists(path),
+		"valid": false,
+		"data": {}
+	}
+	if not bool(result["exists"]):
+		return result
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return result
+	var save_text := file.get_as_text()
+	var read_error := file.get_error()
+	file.close()
+	if read_error != OK:
+		return result
+	var json := JSON.new()
+	if json.parse(save_text) != OK or typeof(json.data) != TYPE_DICTIONARY:
+		return result
+	var data: Dictionary = json.data as Dictionary
+	if not _is_save_dictionary_valid(data):
+		return result
+	result["valid"] = true
+	result["data"] = data
+	return result
+
+func _is_save_dictionary_valid(data: Dictionary) -> bool:
+	var required_types := {
+		"current_level_id": TYPE_STRING,
+		"stars_by_level_id": TYPE_DICTIONARY,
+		"tutorial_completed_by_id": TYPE_DICTIONARY,
+		"has_played": TYPE_BOOL,
+		"haptics_enabled": TYPE_BOOL,
+		"theme": TYPE_STRING,
+		"language": TYPE_STRING
+	}
+	if not data.has("save_version") or not _is_json_number(data["save_version"]):
+		return false
+	var stored_version := int(data["save_version"])
+	if stored_version < 1 or float(data["save_version"]) != float(stored_version):
+		return false
+	# Legacy v1/v2 saves predate the current schema and are intentionally accepted
+	# as versioned dictionaries so the established full-reset migration still
+	# runs. Current-schema validation must not block that migration seam.
+	if stored_version < 3:
+		return true
+	for key in required_types:
+		if not data.has(key) or typeof(data[key]) != int(required_types[key]):
+			return false
+	for key in ["max_unlocked_level", "music_volume", "sound_volume"]:
+		if not data.has(key) or not _is_json_number(data[key]):
+			return false
+	if not data.has("lumens") or not _is_json_number(data["lumens"]):
+		return false
+	return true
+
+func _is_json_number(value: Variant) -> bool:
+	return typeof(value) == TYPE_INT or typeof(value) == TYPE_FLOAT
+
+func _remove_file_if_present(path: String) -> bool:
+	if not FileAccess.file_exists(path):
+		return true
+	return DirAccess.remove_absolute(ProjectSettings.globalize_path(path)) == OK
+
+func _rename_file(from_path: String, to_path: String) -> bool:
+	return DirAccess.rename_absolute(
+		ProjectSettings.globalize_path(from_path),
+		ProjectSettings.globalize_path(to_path)
+	) == OK
+
 func _apply_full_reset_migration() -> void:
 	_reset_all_persistent_defaults()
-	full_reset_migration_applied = true
 	save_progress()
 
 func _apply_level_content_reset_migration(data: Dictionary) -> void:
 	_reset_all_persistent_defaults()
-	music_volume = int(clamp(int(data.get("music_volume", music_volume)), 0, 100))
-	sound_volume = int(clamp(int(data.get("sound_volume", sound_volume)), 0, 100))
-	haptics_enabled = bool(data.get("haptics_enabled", haptics_enabled))
-	theme = "dark" if str(data.get("theme", theme)) == "dark" else "light"
-	language = str(data.get("language", language))
+	apply_preferences(data)
 	load_tutorials_from_ids(data.get("tutorial_completed_by_id", {}))
-	full_reset_migration_applied = true
 	save_progress()
 
 func load_current_save(data: Dictionary) -> void:
 	lumens = max(0, int(data.get("lumens", lumens)))
 	has_played = bool(data.get("has_played", has_played))
-	music_volume = int(clamp(int(data.get("music_volume", music_volume)), 0, 100))
-	sound_volume = int(clamp(int(data.get("sound_volume", sound_volume)), 0, 100))
-	haptics_enabled = bool(data.get("haptics_enabled", haptics_enabled))
-	theme = "dark" if str(data.get("theme", theme)) == "dark" else "light"
-	language = str(data.get("language", language))
+	apply_preferences(data)
 	load_stars_from_ids(data.get("stars_by_level_id", {}))
 	load_tutorials_from_ids(data.get("tutorial_completed_by_id", {}))
 	recalculate_max_unlocked_level()

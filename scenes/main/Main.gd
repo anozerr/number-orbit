@@ -8,16 +8,22 @@ const CompletePopupScene = preload("res://scenes/ui/LevelCompletePopup.tscn")
 const AudioManagerScript = preload("res://scripts/audio/AudioManager.gd")
 const OrbitSlotsScript = preload("res://scripts/game/OrbitSlots.gd")
 const HintSolverScript = preload("res://scripts/game/HintSolver.gd")
+const GameViewStateScript = preload("res://scripts/game/GameViewState.gd")
 
-const SCREEN_FADE_OUT_DURATION := 0.16
-const SCREEN_FADE_IN_DURATION := 0.20
+const SCREEN_FADE_OUT_DURATION := 0.20
+const SCREEN_FADE_IN_DURATION := 0.24
+# Lead-in before the orbit chips pop after a screen crossfade. Kept below the
+# fade-in so the ripple starts as the screen settles (light handoff), not during
+# it and not after a dead gap.
+const ORBIT_ENTRANCE_AFTER_TRANSITION := 0.16
 const SCREEN_TRANSITION_ROLE_META := &"screen_transition_role"
 const PERSISTENT_HEADER_Z_INDEX := 10
+const SCREEN_TRANSITION_INPUT_Z_INDEX := 299
 const HEADER_TWEEN_META := &"persistent_header_tween"
-# Кросс-фейд смены темы/языка (4.1/4.2): снапшот старого экрана растворяется над
-# мгновенно перестроенным новым. 0.32с (было 0.48) — меньше заблокированного ввода.
-const THEME_CROSSFADE_SECONDS := 0.32
-const INTERNAL_SCREEN_FADE_DELAY := 0.15
+const VOLUME_SAVE_DEBOUNCE_SECONDS := 0.30
+# Кросс-фейд скрывает синхронный rebuild, но не должен ощущаться отдельной паузой.
+# 0.20с совпадает по темпу с обычными переходами между экранами.
+const THEME_CROSSFADE_SECONDS := 0.20
 
 var state: GameState = GameState.new()
 var orbit_items: Array = []
@@ -28,21 +34,27 @@ var settings_return_screen: String = "menu"
 var settings_game_coach_snapshot: Dictionary = {}
 var orbit_input_locked: bool = false
 var shown_tutorial_coaches: Dictionary = {}
-var coach_navigation_transitioning := false
 
 var bg: ThemeBackground
 var theme_crossfade: TextureRect
 var theme_transitioning := false
+var screen_transition_tween: Tween
+var screen_transition_from: CanvasItem
+var screen_transition_to: CanvasItem
+var screen_transition_input_blocker: Control
 var current_screen: String = "menu"
 var persistent_header_root: Control
 var persistent_back_button: Button
 var persistent_settings_button: Button
-var audio: Node
+var audio: AudioManager
+var volume_save_timer: Timer
 var main_menu: MainMenuScreen
 var level_select: LevelSelectScreen
 var settings_screen: SettingsScreen
 var game_screen: GameScreen
 var complete_popup: LevelCompletePopup
+var game_screen_visuals_dirty := false
+var complete_popup_visuals_dirty := false
 var last_reward_delta := 0
 
 func _ready() -> void:
@@ -54,9 +66,6 @@ func _ready() -> void:
 	Locale.set_language(state.language)
 	audio = AudioManagerScript.new()
 	audio.name = "AudioManager"
-	audio.set("music_volume", state.music_volume)
-	audio.set("sound_volume", state.sound_volume)
-	audio.set("haptics_enabled", state.haptics_enabled)
 	add_child(audio)
 	audio.configure(state.music_volume, state.sound_volume, state.haptics_enabled)
 	build()
@@ -64,6 +73,10 @@ func _ready() -> void:
 
 func _on_viewport_resized() -> void:
 	_layout_persistent_header()
+	if is_instance_valid(complete_popup) and not complete_popup.visible:
+		complete_popup_visuals_dirty = true
+	if is_instance_valid(screen_transition_input_blocker):
+		screen_transition_input_blocker.size = Layout.viewport_size(self)
 	# A theme/language snapshot may outlive several resize events during its
 	# 0.32s fade. Keep it covering the newly exposed canvas instead of leaving a
 	# vertical strip with the old background geometry.
@@ -73,7 +86,7 @@ func _on_viewport_resized() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED:
-		state.save_progress()
+		_save_progress_now()
 
 func build() -> void:
 	if bg == null:
@@ -116,6 +129,7 @@ func build() -> void:
 	complete_popup.double_reward_requested.connect(_on_double_reward_requested)
 
 	_build_persistent_header()
+	_build_screen_transition_input_blocker()
 	_hide_all_local_headers()
 
 func get_or_create_screen(node_name: String, scene: PackedScene) -> Node:
@@ -129,63 +143,88 @@ func get_or_create_screen(node_name: String, scene: PackedScene) -> Node:
 	add_child(instance)
 	return instance
 
-func hide_all(except: CanvasItem = null, animate: bool = true) -> void:
-	for screen in [main_menu, level_select, settings_screen, game_screen]:
-		if screen == except or not screen.visible:
-			continue
-		if animate:
-			fade_out_screen(screen)
-		else:
-			_set_screen_visible_immediate(screen, false)
-	if complete_popup.visible:
-		complete_popup.hide_popup()
-
-func fade_out_screen(screen: CanvasItem) -> void:
-	_kill_screen_tween(screen)
-	var tween := screen.create_tween()
-	screen.set_meta("screen_transition_tween", tween)
-	tween.tween_property(screen, "modulate:a", 0.0, SCREEN_FADE_OUT_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	tween.finished.connect(func() -> void:
-		if not is_instance_valid(screen):
-			return
-		screen.visible = false
-		screen.modulate.a = 1.0
-		screen.remove_meta("screen_transition_tween")
-	)
-
-func fade_in_screen(screen: CanvasItem, delay: float = 0.0) -> void:
-	_kill_screen_tween(screen)
-	screen.visible = true
-	screen.modulate.a = 0.0
-	screen.position = _screen_home(screen)
-	var tween := screen.create_tween()
-	screen.set_meta("screen_transition_tween", tween)
-	if delay > 0.0:
-		tween.tween_interval(delay)
-	tween.tween_property(screen, "modulate:a", 1.0, SCREEN_FADE_IN_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tween.finished.connect(func() -> void:
-		if is_instance_valid(screen):
-			screen.remove_meta("screen_transition_tween")
-	)
-
 func _show_screen(screen: CanvasItem, animate: bool) -> void:
+	_settle_screen_transition()
 	var was_visible := screen.visible
 	var outgoing_screen: CanvasItem
 	for candidate in [main_menu, level_select, settings_screen, game_screen]:
 		if candidate != screen and candidate.visible:
 			outgoing_screen = candidate
 			break
-	var internal_transition := outgoing_screen != null and outgoing_screen != main_menu and screen != main_menu
-	_transition_persistent_header(outgoing_screen, screen, animate and not was_visible, internal_transition)
-	hide_all(screen, animate)
-	if animate and not was_visible:
-		fade_in_screen(screen, INTERNAL_SCREEN_FADE_DELAY if internal_transition else 0.0)
+	var should_animate := animate and not was_visible
+	_transition_persistent_header(outgoing_screen, screen, should_animate)
+	for candidate in [main_menu, level_select, settings_screen, game_screen]:
+		if candidate != screen and candidate != outgoing_screen:
+			_set_screen_visible_immediate(candidate, false)
+	if complete_popup.visible:
+		complete_popup.hide_popup()
+	if should_animate:
+		_crossfade_screens(outgoing_screen, screen)
 	else:
+		if is_instance_valid(outgoing_screen):
+			_set_screen_visible_immediate(outgoing_screen, false)
 		_set_screen_visible_immediate(screen, true)
+		_reset_persistent_header_z()
+
+func _crossfade_screens(outgoing_screen: CanvasItem, incoming_screen: CanvasItem) -> void:
+	incoming_screen.position = _screen_home(incoming_screen)
+	incoming_screen.z_index = 0
+	incoming_screen.modulate.a = 0.0
+	incoming_screen.visible = true
+	if is_instance_valid(outgoing_screen):
+		outgoing_screen.position = _screen_home(outgoing_screen)
+		outgoing_screen.modulate.a = 1.0
+		outgoing_screen.visible = true
+		# Descendants use their own relative z-indices (some reach 110), so a
+		# literal 0/1 split would let parts of the incoming screen leak above the
+		# outgoing one. Shift the outgoing root just far enough to keep its whole
+		# visible tree above the incoming tree without flattening local UI layers.
+		var incoming_bounds := _screen_relative_z_bounds(incoming_screen)
+		var outgoing_bounds := _screen_relative_z_bounds(outgoing_screen)
+		outgoing_screen.z_index = maxi(1, incoming_bounds.y - outgoing_bounds.x + 1)
+		_raise_persistent_header_for_transition(outgoing_screen, incoming_screen, outgoing_bounds, incoming_bounds)
+	else:
+		_reset_persistent_header_z()
+	_set_screen_transition_input_blocked(true)
+	screen_transition_from = outgoing_screen
+	screen_transition_to = incoming_screen
+	var tween := create_tween().set_parallel(true)
+	screen_transition_tween = tween
+	tween.tween_property(incoming_screen, "modulate:a", 1.0, SCREEN_FADE_IN_DURATION).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	if is_instance_valid(outgoing_screen):
+		tween.tween_property(outgoing_screen, "modulate:a", 0.0, SCREEN_FADE_OUT_DURATION).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tween.finished.connect(_on_screen_transition_finished.bind(tween, outgoing_screen, incoming_screen))
+
+func _on_screen_transition_finished(tween: Tween, outgoing_screen: CanvasItem, incoming_screen: CanvasItem) -> void:
+	if screen_transition_tween != tween:
+		return
+	_finalize_screen_transition(outgoing_screen, incoming_screen)
+
+func _finalize_screen_transition(outgoing_screen: CanvasItem, incoming_screen: CanvasItem) -> void:
+	screen_transition_tween = null
+	screen_transition_from = null
+	screen_transition_to = null
+	if is_instance_valid(outgoing_screen):
+		_set_screen_visible_immediate(outgoing_screen, false)
+	if is_instance_valid(incoming_screen):
+		_set_screen_visible_immediate(incoming_screen, true)
+	_set_screen_transition_input_blocked(false)
+	_reset_persistent_header_z()
+
+func _settle_screen_transition() -> void:
+	if screen_transition_tween == null:
+		return
+	if screen_transition_tween.is_valid():
+		screen_transition_tween.kill()
+	var outgoing_screen := screen_transition_from
+	var incoming_screen := screen_transition_to
+	_finalize_screen_transition(outgoing_screen, incoming_screen)
 
 func _set_screen_visible_immediate(screen: CanvasItem, shown: bool) -> void:
-	_kill_screen_tween(screen)
+	if not is_instance_valid(screen):
+		return
 	screen.position = _screen_home(screen)
+	screen.z_index = 0
 	screen.modulate.a = 1.0
 	screen.visible = shown
 
@@ -194,12 +233,55 @@ func _screen_home(screen: CanvasItem) -> Vector2:
 		screen.set_meta("screen_transition_home", screen.position)
 	return screen.get_meta("screen_transition_home") as Vector2
 
-func _kill_screen_tween(screen: CanvasItem) -> void:
-	if screen.has_meta("screen_transition_tween"):
-		var tween := screen.get_meta("screen_transition_tween") as Tween
-		if tween != null and tween.is_valid():
-			tween.kill()
-		screen.remove_meta("screen_transition_tween")
+func _screen_relative_z_bounds(root: CanvasItem, relative_z: int = 0) -> Vector2i:
+	var bounds := Vector2i(relative_z, relative_z)
+	for child_node in root.get_children():
+		var child := child_node as CanvasItem
+		if child == null or not child.visible:
+			continue
+		var child_z := relative_z + child.z_index if child.z_as_relative else child.z_index
+		var child_bounds := _screen_relative_z_bounds(child, child_z)
+		bounds.x = mini(bounds.x, child_bounds.x)
+		bounds.y = maxi(bounds.y, child_bounds.y)
+	return bounds
+
+func _build_screen_transition_input_blocker() -> void:
+	if not is_instance_valid(screen_transition_input_blocker):
+		screen_transition_input_blocker = Control.new()
+		screen_transition_input_blocker.name = "ScreenTransitionInputBlocker"
+		screen_transition_input_blocker.position = Vector2.ZERO
+		screen_transition_input_blocker.z_index = SCREEN_TRANSITION_INPUT_Z_INDEX
+		screen_transition_input_blocker.mouse_filter = Control.MOUSE_FILTER_STOP
+		add_child(screen_transition_input_blocker)
+	screen_transition_input_blocker.size = Layout.viewport_size(self)
+	screen_transition_input_blocker.visible = false
+
+func _set_screen_transition_input_blocked(blocked: bool) -> void:
+	if is_instance_valid(screen_transition_input_blocker):
+		screen_transition_input_blocker.visible = blocked
+
+func _transition_uses_coach_overlay(outgoing_screen: CanvasItem, incoming_screen: CanvasItem) -> bool:
+	return (
+		(outgoing_screen == game_screen or incoming_screen == game_screen)
+		and is_instance_valid(game_screen)
+		and is_instance_valid(game_screen.coach_overlay)
+		and game_screen.coach_overlay.visible
+	)
+
+func _raise_persistent_header_for_transition(outgoing_screen: CanvasItem, incoming_screen: CanvasItem, outgoing_bounds: Vector2i, incoming_bounds: Vector2i) -> void:
+	if not is_instance_valid(persistent_header_root):
+		return
+	# While the tutorial shader is present, its existing z=90 relationship must
+	# remain intact so the shared buttons stay behind it and non-clickable.
+	if _transition_uses_coach_overlay(outgoing_screen, incoming_screen):
+		persistent_header_root.z_index = PERSISTENT_HEADER_Z_INDEX
+		return
+	var outgoing_top := outgoing_screen.z_index + outgoing_bounds.y
+	persistent_header_root.z_index = maxi(PERSISTENT_HEADER_Z_INDEX, maxi(outgoing_top, incoming_bounds.y) + 1)
+
+func _reset_persistent_header_z() -> void:
+	if is_instance_valid(persistent_header_root):
+		persistent_header_root.z_index = PERSISTENT_HEADER_Z_INDEX
 
 func _screen_header_controls(screen: CanvasItem) -> Dictionary:
 	var controls: Dictionary = {}
@@ -302,7 +384,7 @@ func _set_persistent_header_coach_blocked(blocked: bool) -> void:
 		elif button.visible:
 			button.mouse_filter = Control.MOUSE_FILTER_STOP
 
-func _transition_persistent_header(from_screen: CanvasItem, to_screen: CanvasItem, animate: bool, internal_transition: bool) -> void:
+func _transition_persistent_header(from_screen: CanvasItem, to_screen: CanvasItem, animate: bool) -> void:
 	_hide_all_local_headers()
 	var coach_active := to_screen == game_screen and is_instance_valid(game_screen.coach_overlay) and game_screen.coach_overlay.visible
 	if is_instance_valid(persistent_header_root):
@@ -322,6 +404,8 @@ func _transition_persistent_header(from_screen: CanvasItem, to_screen: CanvasIte
 		var shown_before := _screen_has_header_role(from_screen, role)
 		var shown_after := _screen_has_header_role(to_screen, role)
 		if shown_before and shown_after:
+			# This is one persistent button shared by both screens: keep it fully
+			# visible and never attach it to either side of the crossfade.
 			button.visible = true
 			button.modulate.a = 1.0
 			button.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -337,12 +421,10 @@ func _transition_persistent_header(from_screen: CanvasItem, to_screen: CanvasIte
 		button.set_meta(HEADER_TWEEN_META, tween)
 		if shown_after:
 			button.modulate.a = 0.0
-			if internal_transition:
-				tween.tween_interval(INTERNAL_SCREEN_FADE_DELAY)
-			tween.tween_property(button, "modulate:a", 1.0, SCREEN_FADE_IN_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+			tween.tween_property(button, "modulate:a", 1.0, SCREEN_FADE_IN_DURATION).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		else:
 			button.modulate.a = 1.0
-			tween.tween_property(button, "modulate:a", 0.0, SCREEN_FADE_OUT_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+			tween.tween_property(button, "modulate:a", 0.0, SCREEN_FADE_OUT_DURATION).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
 		tween.finished.connect(_on_persistent_header_transition_finished.bind(button, tween, to_screen, role))
 
 func _on_persistent_header_transition_finished(button: Button, tween: Tween, target_screen: CanvasItem, role: StringName) -> void:
@@ -379,34 +461,35 @@ func show_level_select(animate: bool = true) -> void:
 	current_screen = "levels"
 	tutorial_mode = false
 	level_select.rebuild_level_difficulties(state.star_ratings, state.max_unlocked_level, state.tutorial_completed, state.lumens)
-	_hide_all_local_headers()
 	_show_screen(level_select, animate)
 
 func show_settings(animate: bool = true) -> void:
 	current_screen = "settings"
 	settings_screen.configure(state.music_volume, state.sound_volume, state.theme, state.language, state.haptics_enabled)
-	_hide_all_local_headers()
 	_show_screen(settings_screen, animate)
 
 func show_game(animate: bool = true) -> void:
+	var preserve_current_board := current_screen == "game" or (current_screen == "settings" and settings_return_screen == "game")
+	# A real crossfade only happens when arriving from another screen. In that case
+	# hold the orbit's pop-in until the screen has (almost) materialised so the two
+	# animations read as a sequence, not an overlap.
+	var crossfade_in := animate and not game_screen.visible
 	current_screen = "game"
+	_ensure_game_screen_visuals(preserve_current_board)
+	game_screen.orbit_entrance_delay = ORBIT_ENTRANCE_AFTER_TRANSITION if crossfade_in else 0.0
 	var coach_snapshot := settings_game_coach_snapshot.duplicate(true)
 	if not coach_snapshot.is_empty():
-		game_screen.prepare_coach_restore()
+		game_screen.prepare_coach_snapshot_restore(coach_snapshot)
 	refresh_game_screen()
 	if not coach_snapshot.is_empty():
-		game_screen.queue_coach_snapshot(coach_snapshot, INTERNAL_SCREEN_FADE_DELAY if animate else 0.0)
 		settings_game_coach_snapshot.clear()
 	restore_cached_hint_highlight()
-	_hide_all_local_headers()
 	_show_screen(game_screen, animate)
 
 func restore_cached_hint_highlight() -> void:
 	if not state.has_cached_hint_for_current_move():
 		return
 	var target := state.cached_hint_target.duplicate(true)
-	if target.is_empty():
-		target = hint_target_from_text(state.cached_hint_text)
 	if not target.is_empty():
 		game_screen.restore_hint_highlight(target)
 
@@ -416,9 +499,9 @@ func _on_theme_changed(theme_name: String) -> void:
 	theme_transitioning = true
 	await crossfade_rebuild(func() -> void:
 		state.theme = theme_name
-		state.save_progress()
 		UIStyles.set_theme(theme_name)
 	)
+	_save_progress_now()
 	theme_transitioning = false
 
 func capture_theme_snapshot() -> TextureRect:
@@ -442,9 +525,9 @@ func _on_language_changed(language_code: String) -> void:
 	theme_transitioning = true
 	await crossfade_rebuild(func() -> void:
 		state.language = language_code
-		state.save_progress()
 		Locale.set_language(language_code)
 	)
+	_save_progress_now()
 	theme_transitioning = false
 
 # Общий снапшот-кросс-фейд для смены темы/языка (4.1): захватываем текущий экран,
@@ -462,21 +545,30 @@ func crossfade_rebuild(apply_change: Callable) -> void:
 	if theme_crossfade == snapshot:
 		theme_crossfade = null
 
-# Rebuild every screen's visuals for the current theme/language, preserving the
-# active screen and in-progress game state.
+# Rebuild only what is visible. Menu, Levels, and Settings already rebuild from
+# their show methods; Game and the completion popup are marked dirty because
+# their show paths otherwise update content without recreating themed controls.
 func rebuild_all(animate_screen: bool = true) -> void:
 	if bg != null:
 		bg.refresh()
-	main_menu.build()
-	settings_screen.configure(state.music_volume, state.sound_volume, state.theme, state.language, state.haptics_enabled)
-	if current_screen == "settings" and settings_return_screen == "game":
+	game_screen_visuals_dirty = true
+	complete_popup_visuals_dirty = true
+	_build_persistent_header()
+	show_current_screen(animate_screen)
+
+func _ensure_game_screen_visuals(preserve_current_board: bool) -> void:
+	if not game_screen_visuals_dirty:
+		return
+	if preserve_current_board:
 		game_screen.restore_orbit_without_entrance_animation()
 	game_screen.build()
+	game_screen_visuals_dirty = false
+
+func _ensure_complete_popup_visuals() -> void:
+	if not complete_popup_visuals_dirty:
+		return
 	complete_popup.build()
-	_build_persistent_header()
-	_hide_all_local_headers()
-	# LevelSelect rebuilds its own structure when shown (needs star data).
-	show_current_screen(animate_screen)
+	complete_popup_visuals_dirty = false
 
 func show_current_screen(animate: bool = true) -> void:
 	match current_screen:
@@ -498,41 +590,20 @@ func _on_levels_settings_pressed() -> void:
 	show_settings()
 
 func _on_reset_progress_pressed() -> void:
-	var keep_music := state.music_volume
-	var keep_sound := state.sound_volume
-	var keep_haptics := state.haptics_enabled
-	var keep_theme := state.theme
-	var keep_language := state.language
-	state.setup(LevelData.get_levels(), false)
-	state.music_volume = keep_music
-	state.sound_volume = keep_sound
-	state.haptics_enabled = keep_haptics
-	state.theme = keep_theme
-	state.language = keep_language
-	UIStyles.set_theme(state.theme)
-	Locale.set_language(state.language)
+	state.reset_progress_preserving_preferences()
+	settings_game_coach_snapshot.clear()
+	shown_tutorial_coaches.clear()
 	tutorial_levels = LevelData.get_tutorial_levels()
-	settings_screen.configure(state.music_volume, state.sound_volume, state.theme, state.language, state.haptics_enabled)
-	if audio != null:
-		audio.set_volumes(state.music_volume, state.sound_volume)
-		audio.set_haptics_enabled(state.haptics_enabled)
-	load_level(1)
-	state.save_progress()
+	_save_progress_now()
 	show_main_menu()
 
 func _on_game_settings_pressed() -> void:
-	if is_level_complete_modal_active() or coach_navigation_transitioning:
+	if is_level_complete_modal_active():
 		return
 	settings_return_screen = "game"
 	settings_game_coach_snapshot = game_screen.active_coach_snapshot()
-	if not settings_game_coach_snapshot.is_empty():
-		coach_navigation_transitioning = true
-		await game_screen.fade_active_coach_for_navigation()
-		if current_screen != "game":
-			coach_navigation_transitioning = false
-			return
+	game_screen.prepare_coach_for_screen_navigation()
 	show_settings()
-	coach_navigation_transitioning = false
 
 func _on_game_coach_header_mode_changed(active: bool) -> void:
 	if current_screen != "game":
@@ -544,7 +615,7 @@ func _on_game_coach_header_mode_changed(active: bool) -> void:
 	game_screen._set_local_header_over_coach(false)
 
 func _on_settings_back_pressed() -> void:
-	state.save_progress()
+	_save_progress_now()
 	match settings_return_screen:
 		"game":
 			show_game()
@@ -558,12 +629,27 @@ func _on_settings_volumes_changed(music_value: int, sound_value: int) -> void:
 	state.sound_volume = sound_value
 	if audio != null:
 		audio.set_volumes(music_value, sound_value)
-	state.save_progress()
+	_schedule_volume_save()
 
 func _on_settings_haptics_changed(enabled: bool) -> void:
 	state.haptics_enabled = enabled
 	if audio != null:
 		audio.set_haptics_enabled(enabled)
+	_save_progress_now()
+
+func _schedule_volume_save() -> void:
+	if not is_instance_valid(volume_save_timer):
+		volume_save_timer = Timer.new()
+		volume_save_timer.name = "VolumeSaveTimer"
+		volume_save_timer.one_shot = true
+		volume_save_timer.wait_time = VOLUME_SAVE_DEBOUNCE_SECONDS
+		volume_save_timer.timeout.connect(func() -> void: state.save_progress())
+		add_child(volume_save_timer)
+	volume_save_timer.start()
+
+func _save_progress_now() -> void:
+	if is_instance_valid(volume_save_timer):
+		volume_save_timer.stop()
 	state.save_progress()
 
 func _on_play_pressed() -> void:
@@ -609,15 +695,9 @@ func _on_level_select_back_pressed() -> void:
 	show_main_menu()
 
 func _on_game_back_pressed() -> void:
-	if is_level_complete_modal_active() or coach_navigation_transitioning:
+	if is_level_complete_modal_active():
 		return
-	var coach_was_active := not game_screen.active_coach_snapshot().is_empty()
-	if coach_was_active:
-		coach_navigation_transitioning = true
-		await game_screen.fade_active_coach_for_navigation()
-		if current_screen != "game":
-			coach_navigation_transitioning = false
-			return
+	game_screen.prepare_coach_for_screen_navigation()
 	if tutorial_mode:
 		if state.are_all_tutorials_completed():
 			show_level_select()
@@ -625,7 +705,6 @@ func _on_game_back_pressed() -> void:
 			show_main_menu()
 	else:
 		show_level_select()
-	coach_navigation_transitioning = false
 
 func is_level_complete_modal_active() -> bool:
 	return is_instance_valid(complete_popup) and complete_popup.visible
@@ -676,8 +755,25 @@ func restart_level() -> void:
 
 func refresh_game_screen() -> void:
 	var data: Dictionary = active_level_data()
-	var star_bands: Array = StarCalculator.star_bands(data)
-	game_screen.configure(active_level_title(), state.current_number, state.target_number, state.moves_used, str(data.get("star_mode", "")), star_bands, visible_orbit_items(), data["allowed_ops"] as Array, state.is_level_failed, state.lumens, state.current_hint_cost(), tutorial_mode, tutorial_help_text(data), tutorial_coach_data(data), bool(data.get("placeholder", false)))
+	var view := GameViewStateScript.new()
+	view.title_text = active_level_title()
+	view.current_number = state.current_number
+	view.target_number = state.target_number
+	view.moves = state.moves_used
+	view.star_mode = str(data.get("star_mode", ""))
+	view.star_bands = StarCalculator.star_bands(data)
+	view.orbit_items = visible_orbit_items()
+	view.allowed_ops = data.get("allowed_ops", []) as Array
+	view.failed = state.is_level_failed
+	view.lumens = state.lumens
+	view.hint_cost = state.current_hint_cost()
+	view.tutorial = tutorial_mode
+	view.tutorial_help = tutorial_help_text(data)
+	view.coach_hint = tutorial_coach_data(data)
+	view.placeholder = bool(data.get("placeholder", false))
+	game_screen.configure(view)
+	if state.has_cached_hint_for_current_move():
+		game_screen.restore_hint_result_cache(state.cached_hint_text, state.lumens, state.cached_hint_target)
 
 func visible_orbit_items() -> Array:
 	var result: Array = []
@@ -787,6 +883,7 @@ func complete_level() -> void:
 		state.save_progress()
 	last_reward_delta = max(0, reward)
 	refresh_game_screen()
+	_ensure_complete_popup_visuals()
 	if tutorial_mode:
 		complete_popup.show_result(active_level_title(), 0, state.moves_used, true, reward, state.lumens, show_details, teaser)
 	else:
@@ -828,8 +925,6 @@ func _on_hint_requested() -> void:
 		return
 	if state.has_cached_hint_for_current_move():
 		var cached_target := state.cached_hint_target.duplicate(true)
-		if cached_target.is_empty():
-			cached_target = hint_target_from_text(state.cached_hint_text)
 		if cached_target.is_empty():
 			game_screen.show_hint_result(state.cached_hint_text, state.lumens)
 		else:
@@ -900,54 +995,6 @@ func _on_hint_ad_requested() -> void:
 	else:
 		game_screen.show_insufficient_hint_balance(state.lumens)
 
-func hint_target_from_text(hint_text: String) -> Dictionary:
-	var parsed := parse_hint_move(hint_text)
-	if parsed.is_empty():
-		return {}
-	var op := str(parsed["op"])
-	var value := int(parsed["value"])
-	for raw_item in orbit_items:
-		var item: Dictionary = raw_item as Dictionary
-		if str(item.get("op", "")) != op or int(item.get("value", 0)) != value:
-			continue
-		if not OperationLogic.can_apply(state.current_number, value, op):
-			continue
-		return {
-			"id": str(item.get("id", "")),
-			"op": op,
-			"value": value
-		}
-	return parsed
-
-func parse_hint_move(hint_text: String) -> Dictionary:
-	var marker := "Next move:"
-	var idx := hint_text.find(marker)
-	if idx < 0:
-		return {}
-	var tail := hint_text.substr(idx + marker.length()).strip_edges()
-	var parts := tail.split(" ", false)
-	if parts.size() < 2:
-		return {}
-	var op := op_from_hint_symbol(str(parts[0]))
-	if op.is_empty():
-		return {}
-	return {
-		"op": op,
-		"value": int(parts[1])
-	}
-
-func op_from_hint_symbol(symbol: String) -> String:
-	match symbol:
-		"+":
-			return "add"
-		"−", "-":
-			return "subtract"
-		"×", "x", "*":
-			return "multiply"
-		"÷", "/":
-			return "divide"
-	return ""
-
 func active_level_data() -> Dictionary:
 	return tutorial_levels[tutorial_index] if tutorial_mode else state.current_level_data()
 
@@ -957,7 +1004,20 @@ func active_level_title() -> String:
 	return Locale.t("game.level", "LEVEL %d") % state.current_level
 
 func _on_popup_next_pressed() -> void:
-	complete_popup.hide_popup(_continue_after_complete_popup)
+	# When the next step stays on the game screen, dismiss the old orbit in parallel
+	# with the popup sliding away, then swap in the next level — so the boards flow
+	# into each other instead of the old chips vanishing in a single frame. Going to
+	# level select keeps the plain popup-hide (the screen crossfade covers it).
+	if _completion_advances_in_place():
+		complete_popup.hide_popup()
+		game_screen.dismiss_orbit(_continue_after_complete_popup)
+	else:
+		complete_popup.hide_popup(_continue_after_complete_popup)
+
+func _completion_advances_in_place() -> bool:
+	if tutorial_mode:
+		return tutorial_index < tutorial_levels.size() - 1
+	return state.current_level < LevelData.PLAYABLE_LEVEL_COUNT
 
 func _continue_after_complete_popup() -> void:
 	if tutorial_mode:

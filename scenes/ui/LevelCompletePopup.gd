@@ -39,7 +39,6 @@ var reward_hint_label: Label
 var reward_label: Label
 var next_button: Button
 var levels_button: Button
-var badge_circle: TextureRect
 var confetti_layer: Control
 var panel_width := 1005.0
 var panel_height := 1043.0
@@ -90,6 +89,11 @@ func _ready() -> void:
 	build()
 
 func _on_viewport_resized() -> void:
+	# Main marks a hidden popup dirty and rebuilds it immediately before its next
+	# show. Recreating the whole hidden tree here only made the next build duplicate
+	# that work.
+	if not visible:
+		return
 	var was_visible := visible
 	build()
 	# 5.1: после ребилда переприменяем последний результат (без повторной анимации входа
@@ -125,7 +129,7 @@ func build() -> void:
 	confetti_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(confetti_layer)
 
-	badge_circle = PopupFactoryScript.badge(panel, pw, Color("#7FE3D2"), Color("#2FB6A8"), UIStyles.ICON_CHECK, 94.0)
+	PopupFactoryScript.badge(panel, pw, Color("#7FE3D2"), Color("#2FB6A8"), UIStyles.ICON_CHECK, 94.0)
 
 	title_label = PopupFactoryScript.title(panel, pw, "")
 

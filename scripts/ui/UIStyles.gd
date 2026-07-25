@@ -31,7 +31,6 @@ const ONEST_800: FontFile = preload("res://assets/fonts/onest/onest-cyrillic-800
 # --- Icons (theme-independent; recolored at use site via modulate) ---
 const ICON_BACK: Texture2D = preload("res://assets/images/icons/arrow-left.svg")
 const ICON_CHECK: Texture2D = preload("res://assets/images/icons/check.svg")
-const ICON_LEVELS: Texture2D = preload("res://assets/images/icons/dots-nine.svg")
 const ICON_GEAR: Texture2D = preload("res://assets/images/icons/gear.svg")
 const ICON_INFO: Texture2D = preload("res://assets/images/icons/info.svg")
 const ICON_BULB: Texture2D = preload("res://assets/images/icons/lightbulb.svg")
@@ -42,7 +41,6 @@ const ICON_STAR: Texture2D = preload("res://assets/images/icons/star-fill.svg")
 const ICON_STAR_EMPTY: Texture2D = preload("res://assets/images/icons/star-empty-white.svg")
 const ICON_LEVEL_STAR: Texture2D = preload("res://assets/images/icons/star-level-fill.svg")
 const ICON_LEVEL_STAR_EMPTY: Texture2D = preload("res://assets/images/icons/star-level-empty.svg")
-const ICON_X: Texture2D = preload("res://assets/images/icons/x.svg")
 
 # --- Optional Phosphor additions (loaded lazily; may not exist yet) ---
 const CARET_LEFT_PATH := "res://assets/images/icons/caret-left.svg"
@@ -60,8 +58,16 @@ const ATTENTION_GLOW_MAX_EXTENT := 28.0
 const ATTENTION_GLOW_MIN_ALPHA := 0.42
 const ATTENTION_GLOW_MAX_ALPHA := 1.0
 
+# Full-size gradient textures are keyed by their colors and geometry, so light,
+# dark, and theme-independent assets can safely coexist. Keep a few responsive
+# width variants hot, but cap both entry count and total pixels so desktop window
+# resizing cannot grow either cache forever.
+const ROUNDED_GRADIENT_CACHE_MAX_ENTRIES := 32
+const ROUNDED_GRADIENT_CACHE_MAX_PIXELS := 3_200_000
+const CIRCLE_GRADIENT_CACHE_MAX_ENTRIES := 24
+const CIRCLE_GRADIENT_CACHE_MAX_PIXELS := 1_200_000
+
 # --- Fonts (built once in _static_init) ---
-static var FONT_REGULAR: Font
 static var FONT_MEDIUM: Font
 static var FONT_SEMIBOLD: Font
 static var FONT_BOLD: Font
@@ -74,7 +80,6 @@ static var BG_BLOB_B: Color
 static var TEXT: Color
 static var MUTED: Color
 static var STATUSBAR_TEXT: Color
-static var BORDER: Color
 static var GLASS_BG: Color
 static var GLASS_BORDER: Color
 static var GLASS_POPUP_BG: Color
@@ -89,24 +94,21 @@ static var GOLD: Color
 static var STAR_EMPTY: Color
 static var DISABLED: Color
 static var DANGER_TEXT: Color
-static var DANGER_TOP: Color
 static var DANGER_BOTTOM: Color
 static var TEAL_TOP: Color
 static var TEAL_BOTTOM: Color
-static var TARGET_TEXT: Color
-static var RING: Color
-static var ORBIT_RING: Color
 static var ON_ACCENT: Color
 static var OPERATION_COLORS: Dictionary
 static var COACH_DIM: Color
-static var COACH_PANEL_BG: Color
-static var COACH_PANEL_BORDER: Color
-static var COACH_PANEL_MUTED: Color
 static var COACH_DOT_INACTIVE: Color
 
 static var _theme_name: String = "light"
 static var _rounded_gradient_cache: Dictionary = {}
 static var _circle_gradient_cache: Dictionary = {}
+static var _rounded_gradient_lru: Array[String] = []
+static var _circle_gradient_lru: Array[String] = []
+static var _rounded_gradient_cached_pixels := 0
+static var _circle_gradient_cached_pixels := 0
 static var _smooth_panel_cache: Dictionary = {}
 static var _circle_panel_cache: Dictionary = {}
 static var _icon_cache: Dictionary = {}
@@ -117,7 +119,6 @@ static func _static_init() -> void:
 	# weight: Latin keeps using Jakarta, Cyrillic falls through to the system.
 	_install_cyrillic_fallback()
 	# Static weight files (the variable font's wght axis did not apply reliably).
-	FONT_REGULAR = FONT_500
 	FONT_MEDIUM = FONT_500
 	FONT_SEMIBOLD = FONT_600
 	FONT_BOLD = FONT_700
@@ -144,8 +145,6 @@ static func theme_name() -> String:
 
 static func set_theme(name: String) -> void:
 	_theme_name = "dark" if name == "dark" else "light"
-	_rounded_gradient_cache.clear()
-	_circle_gradient_cache.clear()
 	var t: Dictionary = _dark_palette() if _theme_name == "dark" else _light_palette()
 	BG = t["bg"]
 	BG_BLOB_A = t["blob_a"]
@@ -159,7 +158,6 @@ static func set_theme(name: String) -> void:
 	GLASS_POPUP_BORDER = t["glass_popup_border"]
 	LOCKED_BG = t["locked_bg"]
 	LOCKED_BORDER = t["locked_border"]
-	BORDER = t["glass_border"]
 	PURPLE = t["accent"]
 	PURPLE_DARK = t["accent_dark"]
 	PRIMARY_TOP = t["primary_top"]
@@ -168,19 +166,12 @@ static func set_theme(name: String) -> void:
 	STAR_EMPTY = t["star_empty"]
 	DISABLED = t["disabled"]
 	DANGER_TEXT = t["danger_text"]
-	DANGER_TOP = t["danger_top"]
 	DANGER_BOTTOM = t["danger_bottom"]
 	TEAL_TOP = t["teal_top"]
 	TEAL_BOTTOM = t["teal_bottom"]
-	TARGET_TEXT = t["target_text"]
-	RING = t["ring"]
-	ORBIT_RING = t["orbit_ring"]
 	ON_ACCENT = t["on_accent"]
 	OPERATION_COLORS = t["operations"]
 	COACH_DIM = t["coach_dim"]
-	COACH_PANEL_BG = t["coach_panel_bg"]
-	COACH_PANEL_BORDER = t["coach_panel_border"]
-	COACH_PANEL_MUTED = t["coach_panel_muted"]
 	COACH_DOT_INACTIVE = t["coach_dot_inactive"]
 
 static func is_dark() -> bool:
@@ -208,18 +199,11 @@ static func _light_palette() -> Dictionary:
 		"star_empty": Color("#D8D2E0"),
 		"disabled": Color("#71757F"),
 		"danger_text": Color("#C82424"),
-		"danger_top": Color("#FF9B96"),
 		"danger_bottom": Color("#E0453F"),
 		"teal_top": Color("#7FE3D2"),
 		"teal_bottom": Color("#2FB6A8"),
-		"target_text": Color("#075E66"),
-		"ring": Color("#FBF9FF"),
-		"orbit_ring": Color(0.545, 0.361, 0.965, 0.25),
 		"on_accent": Color.WHITE,
 		"coach_dim": Color(0.078, 0.055, 0.141, 0.46),
-		"coach_panel_bg": Color("#FFFFFF"),
-		"coach_panel_border": Color(0.106, 0.071, 0.2, 0.09),
-		"coach_panel_muted": Color("#8983A0"),
 		"coach_dot_inactive": Color(0.106, 0.071, 0.2, 0.10),
 		"operations": {
 			"add": _operation_swatch("#248E4D", "#155E34", "#E4F5E9", 0.16),
@@ -251,18 +235,11 @@ static func _dark_palette() -> Dictionary:
 		"star_empty": Color("#4A4460"),
 		"disabled": Color("#837C99"),
 		"danger_text": Color("#F87171"),
-		"danger_top": Color("#F87171"),
 		"danger_bottom": Color("#B91C1C"),
 		"teal_top": Color("#5EEAD4"),
 		"teal_bottom": Color("#14B8A6"),
-		"target_text": Color("#053B3B"),
-		"ring": Color(0.078, 0.055, 0.149, 0.45),
-		"orbit_ring": Color(0.655, 0.545, 0.980, 0.28),
 		"on_accent": Color.WHITE,
 		"coach_dim": Color(0.031, 0.020, 0.071, 0.58),
-		"coach_panel_bg": Color("#1E1837"),
-		"coach_panel_border": Color(1, 1, 1, 0.16),
-		"coach_panel_muted": Color("#A79CC7"),
 		"coach_dot_inactive": Color(1, 1, 1, 0.14),
 		"operations": {
 			"add": _operation_swatch("#4CD477", "#74E39A", "#173326", 0.14),
@@ -343,28 +320,12 @@ static func glass_panel(radius: int = CORNER, heavy: bool = false) -> StyleBoxTe
 		PANEL_BORDER_WIDTH
 	)
 
-# Tutorial coach card and its non-step P.S. note share one exact glass surface.
-static func coach_caption_panel(radius: int = 96) -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = COACH_PANEL_BG
-	style.border_color = COACH_PANEL_BORDER
-	_set_border(style, 3)
-	_set_radius(style, radius)
-	style.shadow_color = Color(0.078, 0.039, 0.157, 0.28)
-	style.shadow_size = 120
-	style.shadow_offset = Vector2(0, 60)
-	return style
-
 static func locked_panel(radius: int = CORNER) -> StyleBoxTexture:
 	return smooth_panel(LOCKED_BG, LOCKED_BORDER, radius, PANEL_BORDER_WIDTH)
 
 # Generic filled card (used for colored bubbles / chips with explicit colors).
 static func card(bg: Color = Color.WHITE, border: Color = Color.TRANSPARENT, radius: int = CORNER) -> StyleBoxTexture:
 	return smooth_panel(bg, border if border.a > 0.0 else GLASS_BORDER, radius, PANEL_BORDER_WIDTH)
-
-# Back-compat alias — old call sites used soft_panel(); now maps to glass.
-static func soft_panel(_bg: Color = Color.WHITE, radius: int = 34) -> StyleBoxTexture:
-	return glass_panel(radius, false)
 
 # Appearance segmented-toggle track (mockup: faint purple in light, faint white
 # in dark, 3px border, full corner).
@@ -410,27 +371,15 @@ static func _build_smooth_panel_texture(bg: Color, border: Color, radius: int, b
 	var patch_size := maxi(2, margin * 2 + 2)
 	var scale := SMOOTH_PANEL_SUPERSAMPLE
 	var high_size := patch_size * scale
-	var image := Image.create(high_size, high_size, false, Image.FORMAT_RGBA8)
-	var half := Vector2(high_size, high_size) * 0.5
-	var edge_rgb := border if border.a > 0.0 else bg
-	for y in range(high_size):
-		for x in range(high_size):
-			var p := Vector2(float(x) + 0.5, float(y) + 0.5) - half
-			var outer_distance := rounded_rect_sdf(p, half, float(radius * scale))
-			var outer_alpha := 1.0 - smoothstep(-1.0, 1.0, outer_distance)
-			if outer_alpha <= 0.0:
-				image.set_pixel(x, y, Color(edge_rgb.r, edge_rgb.g, edge_rgb.b, 0.0))
-				continue
-			var inner_alpha := 1.0
-			if border_width > 0 and border.a > 0.0:
-				var inset := float(border_width * scale)
-				var inner_half := half - Vector2(inset, inset)
-				var inner_radius := float(maxi(radius - border_width, 0) * scale)
-				var inner_distance := rounded_rect_sdf(p, inner_half, inner_radius)
-				inner_alpha = 1.0 - smoothstep(-1.0, 1.0, inner_distance)
-			var color := border.lerp(bg, inner_alpha) if border_width > 0 and border.a > 0.0 else bg
-			color.a *= outer_alpha
-			image.set_pixel(x, y, color)
+	var inset := float(border_width * scale)
+	var image := _build_symmetric_sdf_image(
+		high_size,
+		bg,
+		border,
+		float(radius * scale),
+		inset,
+		false
+	)
 	if scale > 1:
 		image.resize(patch_size, patch_size, Image.INTERPOLATE_LANCZOS)
 	image.generate_mipmaps()
@@ -468,27 +417,67 @@ static func circle_panel(diameter: int, bg: Color, border: Color, border_width: 
 	return style
 
 static func _build_circle_texture(diameter: int, bg: Color, border: Color, border_width: int) -> ImageTexture:
-	var image := Image.create(diameter, diameter, false, Image.FORMAT_RGBA8)
-	var center := Vector2(diameter, diameter) * 0.5
 	var outer_r := float(diameter) * 0.5
-	var inner_r := outer_r - float(border_width)
-	var has_border := border_width > 0 and border.a > 0.0
-	# Fully-transparent pixels keep the rim's RGB (alpha 0) so the linear filter /
-	# mipmaps never bleed black into the antialiased edge.
-	var edge_rgb := border if has_border else bg
-	for y in range(diameter):
-		for x in range(diameter):
-			var d := (Vector2(float(x) + 0.5, float(y) + 0.5) - center).length()
-			var outer_alpha := sdf_alpha(d - outer_r)
-			if outer_alpha <= 0.0:
-				image.set_pixel(x, y, Color(edge_rgb.r, edge_rgb.g, edge_rgb.b, 0.0))
-				continue
-			var inner_alpha := sdf_alpha(d - inner_r) if has_border else 1.0
-			var color := border.lerp(bg, inner_alpha) if has_border else bg
-			color.a *= outer_alpha
-			image.set_pixel(x, y, color)
+	var image := _build_symmetric_sdf_image(
+		diameter,
+		bg,
+		border,
+		outer_r,
+		float(border_width),
+		true
+	)
 	image.generate_mipmaps()
 	return ImageTexture.create_from_image(image)
+
+# Rounded nine-patches and full circle panels share the same SDF fill/border
+# math. Their surfaces are symmetric and become a uniform `bg` toward the
+# center, so rasterize one quadrant only until that uniform interior begins,
+# then mirror each edge pixel. `Image.fill()` handles the skipped center in
+# native code instead of revisiting it in GDScript for every palette.
+static func _build_symmetric_sdf_image(side: int, bg: Color, border: Color, outer_radius: float, inner_inset: float, circle: bool) -> Image:
+	var image := Image.create(side, side, false, Image.FORMAT_RGBA8)
+	var half := Vector2.ONE * float(side) * 0.5
+	var inner_half := half - Vector2.ONE * inner_inset
+	var inner_radius := outer_radius - inner_inset
+	if not circle:
+		inner_radius = maxf(0.0, inner_radius)
+	var has_border := inner_inset > 0.0 and border.a > 0.0
+	# Match the old per-pixel expression even in the skipped uniform center; for
+	# some 8-bit colors `border.lerp(bg, 1.0)` rounds one LSB differently from a
+	# direct `fill(bg)`.
+	image.fill(border.lerp(bg, 1.0) if has_border else bg)
+	var edge_rgb := border if has_border else bg
+	var quadrant := ceili(float(side) * 0.5)
+	for y in range(quadrant):
+		for x in range(quadrant):
+			var p := Vector2(float(x) + 0.5, float(y) + 0.5) - half
+			var outer_distance := p.length() - outer_radius if circle else rounded_rect_sdf(p, half, outer_radius)
+			var outer_alpha := sdf_alpha(outer_distance)
+			var inner_alpha := 1.0
+			if has_border:
+				var inner_distance := p.length() - inner_radius if circle else rounded_rect_sdf(p, inner_half, inner_radius)
+				inner_alpha = sdf_alpha(inner_distance)
+			if outer_alpha >= 1.0 and inner_alpha >= 1.0:
+				break
+			var color: Color
+			if outer_alpha <= 0.0:
+				color = Color(edge_rgb.r, edge_rgb.g, edge_rgb.b, 0.0)
+			else:
+				color = border.lerp(bg, inner_alpha) if has_border else bg
+				color.a *= outer_alpha
+			_set_symmetric_image_pixels(image, x, y, color)
+	return image
+
+static func _set_symmetric_image_pixels(image: Image, x: int, y: int, color: Color) -> void:
+	var mirrored_x := image.get_width() - 1 - x
+	var mirrored_y := image.get_height() - 1 - y
+	image.set_pixel(x, y, color)
+	if mirrored_x != x:
+		image.set_pixel(mirrored_x, y, color)
+	if mirrored_y != y:
+		image.set_pixel(x, mirrored_y, color)
+	if mirrored_x != x and mirrored_y != y:
+		image.set_pixel(mirrored_x, mirrored_y, color)
 
 static func _set_border(style: StyleBoxFlat, width: int) -> void:
 	style.border_width_left = width
@@ -529,9 +518,6 @@ static func menu_button(button: Button, radius: int = CORNER) -> void:
 
 static func primary_button(button: Button, radius: int = CORNER) -> void:
 	_gradient_button(button, PRIMARY_TOP, PRIMARY_BOTTOM, radius)
-
-static func danger_button(button: Button, radius: int = CORNER) -> void:
-	_gradient_button(button, DANGER_TOP, DANGER_BOTTOM, radius)
 
 static func _gradient_button(button: Button, top: Color, bottom: Color, radius: int) -> void:
 	# Bake the gradient at the button's REAL size (9-slicing a fixed-size bake
@@ -577,52 +563,158 @@ static func gradient_style(top: Color, bottom: Color, radius: int, texture_size:
 static func rounded_gradient_texture(top: Color, bottom: Color, radius: int, texture_size: Vector2i) -> ImageTexture:
 	var key := "%s:%s:%d:%d:%d" % [top.to_html(true), bottom.to_html(true), radius, texture_size.x, texture_size.y]
 	if _rounded_gradient_cache.has(key):
+		_touch_gradient_cache_key(_rounded_gradient_lru, key)
 		return _rounded_gradient_cache[key] as ImageTexture
-	var image := Image.create(texture_size.x, texture_size.y, false, Image.FORMAT_RGBA8)
-	image.fill(Color(0, 0, 0, 0))
-	var w := texture_size.x
-	var h := texture_size.y
-	# Diagonal 135° gradient (top-left → bottom-right) to match the mockup's
-	# linear-gradient(135deg,…); reads glossier than a flat vertical fill.
-	var denom := float(max(1, w + h - 2))
-	for y in range(h):
-		for x in range(w):
-			var p := Vector2(float(x) + 0.5, float(y) + 0.5)
-			var dist := rounded_rect_sdf(p - Vector2(w, h) * 0.5, Vector2(w, h) * 0.5, float(radius))
-			var alpha := sdf_alpha(dist)
-			if alpha > 0.0:
-				var t := float(x + y) / denom
-				var color := top.lerp(bottom, t)
-				color.a *= alpha
-				image.set_pixel(x, y, color)
+	var safe_size := Vector2i(maxi(1, texture_size.x), maxi(1, texture_size.y))
+	var image := _native_diagonal_gradient_image(top, bottom, safe_size)
+	_apply_rounded_gradient_alpha(image, mini(maxi(radius, 0), mini(safe_size.x, safe_size.y) / 2))
 	image.generate_mipmaps()
 	var texture := ImageTexture.create_from_image(image)
-	_rounded_gradient_cache[key] = texture
+	_store_rounded_gradient(key, texture, safe_size.x * safe_size.y)
 	return texture
 
 static func circle_gradient_texture(diameter: int, top: Color, bottom: Color) -> ImageTexture:
-	var key := "%d:%s:%s" % [diameter, top.to_html(true), bottom.to_html(true)]
+	var safe_diameter := maxi(1, diameter)
+	var key := "%d:%s:%s" % [safe_diameter, top.to_html(true), bottom.to_html(true)]
 	if _circle_gradient_cache.has(key):
+		_touch_gradient_cache_key(_circle_gradient_lru, key)
 		return _circle_gradient_cache[key] as ImageTexture
-	var image := Image.create(diameter, diameter, false, Image.FORMAT_RGBA8)
-	image.fill(Color(0, 0, 0, 0))
-	var radius := float(diameter) * 0.5
+	var image := _native_diagonal_gradient_image(top, bottom, Vector2i.ONE * safe_diameter)
+	var radius := float(safe_diameter) * 0.5
 	var center := Vector2(radius, radius)
-	var denom := float(max(1, 2 * (diameter - 1)))
-	for y in range(diameter):
-		for x in range(diameter):
-			var offset := Vector2(float(x) + 0.5, float(y) + 0.5) - center
-			var alpha := sdf_alpha(offset.length() - radius)
-			if alpha > 0.0:
-				# Diagonal 135° gradient to match the primary button's fill.
-				var t := float(x + y) / denom
-				var color := top.lerp(bottom, t)
-				color.a *= alpha
-				image.set_pixel(x, y, color)
+	_apply_circle_gradient_alpha(image, center, radius)
 	image.generate_mipmaps()
 	var texture := ImageTexture.create_from_image(image)
-	_circle_gradient_cache[key] = texture
+	_store_circle_gradient(key, texture, safe_diameter * safe_diameter)
 	return texture
+
+# GradientTexture2D rasterizes the large color field in native engine code. Its
+# linear fill uses a UV-space projection, while the design's 135° gradient is
+# defined in pixel space as t=(x+y)/(width+height-2). This endpoint may lie beyond
+# [0,1] on a non-square image; the derived vector makes those projections equal.
+static func _native_diagonal_gradient_image(top: Color, bottom: Color, texture_size: Vector2i) -> Image:
+	var gradient := Gradient.new()
+	gradient.set_color(0, top)
+	gradient.set_color(1, bottom)
+	var texture := GradientTexture2D.new()
+	texture.gradient = gradient
+	texture.width = texture_size.x
+	texture.height = texture_size.y
+	texture.fill = GradientTexture2D.FILL_LINEAR
+	texture.fill_from = Vector2.ZERO
+	var pixel_extent := Vector2(maxi(0, texture_size.x - 1), maxi(0, texture_size.y - 1))
+	var extent_sum := pixel_extent.x + pixel_extent.y
+	var weights := pixel_extent / extent_sum if extent_sum > 0.0 else Vector2.ONE
+	texture.fill_to = weights / weights.length_squared()
+	return texture.get_image()
+
+# The native gradient is already opaque everywhere. Touch only the straight
+# one-pixel AA rim and corner squares; the former implementation recalculated
+# the same SDF and called set_pixel for every interior pixel of the texture.
+static func _apply_rounded_gradient_alpha(image: Image, radius: int) -> void:
+	var width := image.get_width()
+	var height := image.get_height()
+	var half := Vector2(width, height) * 0.5
+	for x in range(width):
+		_set_rounded_gradient_pixel_alpha(image, x, 0, half, radius)
+		if height > 1:
+			_set_rounded_gradient_pixel_alpha(image, x, height - 1, half, radius)
+	for y in range(1, height - 1):
+		_set_rounded_gradient_pixel_alpha(image, 0, y, half, radius)
+		if width > 1:
+			_set_rounded_gradient_pixel_alpha(image, width - 1, y, half, radius)
+	var edge := mini(radius + 1, mini(width, height))
+	for local_y in range(1, edge):
+		var mirrored_y := height - 1 - local_y
+		if local_y > mirrored_y:
+			continue
+		for local_x in range(1, edge):
+			var mirrored_x := width - 1 - local_x
+			if local_x > mirrored_x:
+				continue
+			_set_rounded_gradient_pixel_alpha(image, local_x, local_y, half, radius)
+			if mirrored_x != local_x:
+				_set_rounded_gradient_pixel_alpha(image, mirrored_x, local_y, half, radius)
+			if mirrored_y != local_y:
+				_set_rounded_gradient_pixel_alpha(image, local_x, mirrored_y, half, radius)
+			if mirrored_x != local_x and mirrored_y != local_y:
+				_set_rounded_gradient_pixel_alpha(image, mirrored_x, mirrored_y, half, radius)
+
+static func _set_rounded_gradient_pixel_alpha(image: Image, x: int, y: int, half: Vector2, radius: int) -> void:
+	var p := Vector2(float(x) + 0.5, float(y) + 0.5)
+	var alpha := sdf_alpha(rounded_rect_sdf(p - half, half, float(radius)))
+	if alpha >= 1.0:
+		return
+	if alpha <= 0.0:
+		image.set_pixel(x, y, Color(0, 0, 0, 0))
+		return
+	var color := image.get_pixel(x, y)
+	color.a *= alpha
+	image.set_pixel(x, y, color)
+
+# A circle has no large rounded-rectangle interior to skip, so process it by
+# scanline: native fill_rect clears the transparent spans and only the ~2px AA
+# annulus is evaluated pixel-by-pixel. Alpha remains bit-identical to sdf_alpha.
+static func _apply_circle_gradient_alpha(image: Image, center: Vector2, radius: float) -> void:
+	var diameter := image.get_width()
+	var outer_radius := radius + 1.0
+	var inner_radius := maxf(0.0, radius - 1.0)
+	for y in range(diameter):
+		var dy := absf(float(y) + 0.5 - center.y)
+		var outer_half := sqrt(maxf(0.0, outer_radius * outer_radius - dy * dy))
+		var zero_left_end := mini(diameter - 1, int(floor(center.x - outer_half - 0.5)))
+		var zero_right_start := maxi(0, int(ceil(center.x + outer_half - 0.5)))
+		if zero_left_end >= 0:
+			image.fill_rect(Rect2i(0, y, zero_left_end + 1, 1), Color(0, 0, 0, 0))
+		if zero_right_start < diameter:
+			image.fill_rect(Rect2i(zero_right_start, y, diameter - zero_right_start, 1), Color(0, 0, 0, 0))
+		var edge_left_start := zero_left_end + 1
+		var edge_right_end := zero_right_start - 1
+		if inner_radius > 0.0 and dy <= inner_radius:
+			var inner_half := sqrt(maxf(0.0, inner_radius * inner_radius - dy * dy))
+			var opaque_start := clampi(int(ceil(center.x - inner_half - 0.5)), edge_left_start, diameter)
+			var opaque_end := clampi(int(floor(center.x + inner_half - 0.5)), -1, edge_right_end)
+			_apply_circle_gradient_edge_range(image, y, edge_left_start, opaque_start - 1, center, radius)
+			_apply_circle_gradient_edge_range(image, y, opaque_end + 1, edge_right_end, center, radius)
+		else:
+			_apply_circle_gradient_edge_range(image, y, edge_left_start, edge_right_end, center, radius)
+
+static func _apply_circle_gradient_edge_range(image: Image, y: int, from_x: int, to_x: int, center: Vector2, radius: float) -> void:
+	for x in range(maxi(0, from_x), mini(image.get_width() - 1, to_x) + 1):
+		var alpha := sdf_alpha((Vector2(float(x) + 0.5, float(y) + 0.5) - center).length() - radius)
+		var color := image.get_pixel(x, y)
+		color.a *= alpha
+		image.set_pixel(x, y, color)
+
+static func _touch_gradient_cache_key(lru: Array[String], key: String) -> void:
+	lru.erase(key)
+	lru.append(key)
+
+static func _store_rounded_gradient(key: String, texture: ImageTexture, pixels: int) -> void:
+	if pixels > ROUNDED_GRADIENT_CACHE_MAX_PIXELS:
+		return
+	_rounded_gradient_cache[key] = texture
+	_touch_gradient_cache_key(_rounded_gradient_lru, key)
+	_rounded_gradient_cached_pixels += pixels
+	while _rounded_gradient_lru.size() > ROUNDED_GRADIENT_CACHE_MAX_ENTRIES or _rounded_gradient_cached_pixels > ROUNDED_GRADIENT_CACHE_MAX_PIXELS:
+		var oldest: String = _rounded_gradient_lru.pop_front()
+		var evicted := _rounded_gradient_cache.get(oldest) as ImageTexture
+		if evicted != null:
+			_rounded_gradient_cached_pixels -= evicted.get_width() * evicted.get_height()
+		_rounded_gradient_cache.erase(oldest)
+
+static func _store_circle_gradient(key: String, texture: ImageTexture, pixels: int) -> void:
+	if pixels > CIRCLE_GRADIENT_CACHE_MAX_PIXELS:
+		return
+	_circle_gradient_cache[key] = texture
+	_touch_gradient_cache_key(_circle_gradient_lru, key)
+	_circle_gradient_cached_pixels += pixels
+	while _circle_gradient_lru.size() > CIRCLE_GRADIENT_CACHE_MAX_ENTRIES or _circle_gradient_cached_pixels > CIRCLE_GRADIENT_CACHE_MAX_PIXELS:
+		var oldest: String = _circle_gradient_lru.pop_front()
+		var evicted := _circle_gradient_cache.get(oldest) as ImageTexture
+		if evicted != null:
+			_circle_gradient_cached_pixels -= evicted.get_width() * evicted.get_height()
+		_circle_gradient_cache.erase(oldest)
 
 static func rounded_rect_sdf(p: Vector2, half_size: Vector2, radius: float) -> float:
 	var q := Vector2(absf(p.x), absf(p.y)) - half_size + Vector2(radius, radius)
@@ -634,9 +726,6 @@ static func sdf_alpha(distance: float) -> float:
 # ============================================================================
 # Icons & helpers
 # ============================================================================
-
-static func has_icon(path: String) -> bool:
-	return load_icon(path) != null
 
 static func load_icon(path: String) -> Texture2D:
 	if not _icon_cache.has(path):

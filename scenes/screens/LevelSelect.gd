@@ -49,6 +49,9 @@ var _max_unlocked := 1
 var _tutorial_completed: Array = []
 var _lumens := 0
 var _has_data := false
+var _built_theme := ""
+var _built_language := ""
+var _built_viewport_size := Vector2.ZERO
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -56,13 +59,11 @@ func _ready() -> void:
 
 func _on_viewport_resized() -> void:
 	if visible and _has_data:
-		var previous_scroll := last_scroll.scroll_vertical if is_instance_valid(last_scroll) else 0
 		var reopen_popup := is_instance_valid(locked_popup) and locked_popup.visible
 		var reopen_level := locked_popup_level_number
 		var reopen_skippable := locked_popup_skippable
+		# rebuild_level_difficulties preserves the scroll position itself.
 		rebuild_level_difficulties(_star_ratings, _max_unlocked, _tutorial_completed, _lumens)
-		if is_instance_valid(last_scroll):
-			last_scroll.set_deferred("scroll_vertical", previous_scroll)
 		if reopen_popup:
 			show_locked_level_popup(reopen_level, reopen_skippable, true)
 
@@ -70,11 +71,35 @@ func set_lumens(value: int) -> void:
 	_lumens = value
 
 func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tutorial_completed: Array = [], lumens: int = 0) -> void:
-	_star_ratings = star_ratings
+	var viewport_size := Layout.viewport_size(self)
+	var can_reuse := (
+		_has_data
+		and not get_children().is_empty()
+		and _star_ratings == star_ratings
+		and _max_unlocked == max_unlocked_level
+		and _tutorial_completed == tutorial_completed
+		and _lumens == lumens
+		and _built_theme == UIStyles.theme_name()
+		and _built_language == Locale.language()
+		and _built_viewport_size.is_equal_approx(viewport_size)
+	)
+	if can_reuse:
+		return
+
+	_star_ratings = star_ratings.duplicate()
 	_max_unlocked = max_unlocked_level
-	_tutorial_completed = tutorial_completed
+	_tutorial_completed = tutorial_completed.duplicate()
 	_lumens = lumens
 	_has_data = true
+	_built_theme = UIStyles.theme_name()
+	_built_language = Locale.language()
+	_built_viewport_size = viewport_size
+
+	# Preserve the browse position across the rebuild so switching screens — or a
+	# level completion / lumen change / theme swap that forces a rebuild — keeps the
+	# list where the player left it. Only a fresh launch (no prior scroll) starts at
+	# the top. Restored at the end, after the new content height is known.
+	var preserved_scroll := last_scroll.scroll_vertical if is_instance_valid(last_scroll) else 0
 
 	Layout.clear_children_for_rebuild(self)
 	last_scroll = null
@@ -140,6 +165,9 @@ func rebuild_level_difficulties(star_ratings: Array, max_unlocked_level: int, tu
 
 	build_locked_level_popup()
 	# Auto-scroll to the last unlocked level was removed — it got in the way.
+	# Deferred so the ScrollContainer has clamped to the freshly built content
+	# height before we set the position.
+	last_scroll.set_deferred("scroll_vertical", preserved_scroll)
 
 # Alpha-fade the scroll content near the scroll region's top/bottom edges.
 # The fade shader sits on the ScrollContainer and every descendant opts into it
@@ -375,36 +403,6 @@ func are_all_tutorials_completed(tutorial_completed: Array) -> bool:
 
 func _on_level_button_pressed(level_number: int) -> void:
 	level_selected.emit(level_number)
-
-# ---------------------------------------------------------------------------
-# Scroll centering
-# ---------------------------------------------------------------------------
-
-func center_on_level_row(level_number: int) -> void:
-	if last_scroll == null or level_number <= 0:
-		return
-	await get_tree().process_frame
-	await get_tree().process_frame
-	var row_center_y := row_center_for_level(level_number)
-	var desired := int(maxf(0.0, row_center_y - last_scroll.size.y * 0.5))
-	last_scroll.scroll_vertical = desired
-
-func row_center_for_level(level_number: int) -> float:
-	var m := chip_metrics()
-	var chip: float = m["chip"]
-	var row_gap: float = m["row_gap"]
-	var difficulty_index := LevelData.difficulty_index_for_level(level_number)
-	var local_index := LevelData.local_level_number(level_number) - 1
-	# Mirror the actual builder geometry: top runway + How-to (268) + its gap
-	# (67), then each previous section's grid and 108px trailing gap.
-	var section_y := TOP_PAD + 268.0 + 67.0
-	for i in range(difficulty_index):
-		var rows_i := int(ceil(float(LevelData.difficulty_level_count(i)) / 3.0))
-		var height_i := 93.0 + float(rows_i) * row_gap - (row_gap - chip)
-		section_y += height_i + 108.0
-	var start_y := section_y + 93.0
-	var row := int(float(local_index) / 3.0)
-	return start_y + float(row) * row_gap + chip * 0.5
 
 # ---------------------------------------------------------------------------
 # Locked level popup (shared glass shell)

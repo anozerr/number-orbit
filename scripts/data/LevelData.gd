@@ -175,10 +175,6 @@ static func difficulty_index_for_level(level_number: int) -> int:
 			return i
 	return DIFFICULTIES.size() - 1
 
-static func local_level_number(level_number: int) -> int:
-	var index: int = difficulty_index_for_level(level_number)
-	return level_number - difficulty_start_offset(index)
-
 # Count of all levels in the bands before `index` (its first global level - 1).
 static func difficulty_start_offset(index: int) -> int:
 	var offset: int = 0

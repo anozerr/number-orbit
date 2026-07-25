@@ -17,8 +17,8 @@
     </linearGradient>
   </defs>
 
-  <!-- Match the 77 px transparent safe area used by the ICNS. -->
-  <g transform="translate(77 77) scale(0.849609375)">
+  <!-- Match the macOS 824 px keyline with a 100 px transparent safe area. -->
+  <g transform="translate(100 100) scale(0.8046875)">
     <rect width="1024" height="1024" rx="250" fill="url(#background)"/>
     <rect x="2" y="2" width="1020" height="1020" rx="248"
           fill="url(#backgroundHighlight)"
