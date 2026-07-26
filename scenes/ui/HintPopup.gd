@@ -17,11 +17,12 @@ class HintMoveOutline:
 		draw_arc(size * 0.5, radius, 0.0, TAU, 192, outline_color, outline_width, true)
 
 signal hint_requested
-signal hint_ad_requested
+signal hint_ad_requested(reward_amount: int)
 
 var current_lumens: int = 0
 var current_moves: int = 0
 var current_hint_cost: int = 0
+var current_ad_reward: int = 0
 var cached_popup_hint_text: String = ""
 var cached_popup_target: Dictionary = {}
 var cached_popup_move_index: int = -1
@@ -94,7 +95,7 @@ func build(viewport_width: float) -> void:
 	panel.add_child(buy_button)
 
 	ad_button = PopupFactoryScript.primary_button(Locale.t("levels.locked.watch_ad", "Watch Ad"), pw, 520.0)
-	ad_button.pressed.connect(func(): hint_ad_requested.emit())
+	ad_button.pressed.connect(func(): hint_ad_requested.emit(current_ad_reward))
 	ad_button.visible = false
 	panel.add_child(ad_button)
 
@@ -102,10 +103,11 @@ func build(viewport_width: float) -> void:
 	cancel_button.pressed.connect(func(): hide_popup())
 	panel.add_child(cancel_button)
 
-func configure_state(moves: int, lumens: int, hint_cost: int) -> void:
+func configure_state(moves: int, lumens: int, hint_cost: int, ad_reward: int) -> void:
 	current_moves = moves
 	current_lumens = lumens
 	current_hint_cost = hint_cost
+	current_ad_reward = ad_reward
 	if cached_popup_move_index != current_moves:
 		cached_popup_hint_text = ""
 		cached_popup_target.clear()
@@ -174,7 +176,7 @@ func show_insufficient_balance(balance: int) -> void:
 	body_label.text = Locale.t(
 		"hint.insufficient",
 		"Not enough Lumens for a hint. Watch an ad to get %d Lumens."
-	) % GameState.AD_REWARD_LUMENS
+	) % current_ad_reward
 	hide_move_circle()
 	balance_label.position.y = 420.0
 	balance_label.text = Locale.t("hint.balance_short", "Balance: %d / %d Lumens") % [current_lumens, current_hint_cost]

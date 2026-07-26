@@ -126,7 +126,7 @@ func build() -> void:
 	complete_popup = get_or_create_screen("LevelCompletePopup", CompletePopupScene) as LevelCompletePopup
 	complete_popup.next_pressed.connect(_on_popup_next_pressed)
 	complete_popup.levels_pressed.connect(_on_popup_levels_pressed)
-	complete_popup.double_reward_requested.connect(_on_double_reward_requested)
+	complete_popup.triple_reward_requested.connect(_on_triple_reward_requested)
 
 	_build_persistent_header()
 	_build_screen_transition_input_blocker()
@@ -683,8 +683,8 @@ func _on_skip_level_requested(level_number: int) -> void:
 	load_level(level_number)
 	show_game()
 
-func _on_ad_reward_requested(level_number: int) -> void:
-	state.grant_ad_reward()
+func _on_ad_reward_requested(level_number: int, reward_amount: int) -> void:
+	state.grant_ad_reward(reward_amount)
 	state.save_progress()
 	level_select.set_lumens(state.lumens)
 	# Re-evaluate the popup after the reward: keep the balance/Watch Ad state while
@@ -767,6 +767,7 @@ func refresh_game_screen() -> void:
 	view.failed = state.is_level_failed
 	view.lumens = state.lumens
 	view.hint_cost = state.current_hint_cost()
+	view.ad_reward = state.current_ad_reward()
 	view.tutorial = tutorial_mode
 	view.tutorial_help = tutorial_help_text(data)
 	view.coach_hint = tutorial_coach_data(data)
@@ -931,25 +932,31 @@ func _on_hint_requested() -> void:
 			game_screen.reveal_hint_result(state.cached_hint_text, state.lumens, cached_target)
 		return
 
+	var hint_result: Dictionary = HintSolverScript.next_hint(state.current_number, state.target_number, state.moves_used, orbit_items, active_level_data())
+	var hint_text := str(hint_result.get("text", ""))
+	var hint_target: Dictionary = (hint_result.get("target", {}) as Dictionary).duplicate(true)
+	var has_winning_move := bool(hint_result.get("can_win", false)) and not hint_target.is_empty()
+
+	# A dead-end diagnosis is free: only an actual winning move is a paid hint.
+	# Resolve it before the balance check so an insolvent player can still learn
+	# that the current position must be restarted.
+	if not has_winning_move:
+		AudioManagerScript.play_hint_reveal()
+		state.cache_hint(hint_text)
+		game_screen.show_hint_result(hint_text, state.lumens)
+		refresh_game_screen()
+		return
+
 	if not state.can_afford_hint():
 		AudioManagerScript.play_invalid()
 		game_screen.show_insufficient_hint_balance(state.lumens)
 		return
 
-	# Анализ нерешаемой позиции — тоже подсказка: без оплаты этот ответ становится
-	# бесплатным оракулом для перебора ходов через Restart. Сначала подтверждаем
-	# баланс, затем одинаково оплачиваем и следующий ход, и диагноз тупика.
-	var hint_result: Dictionary = HintSolverScript.next_hint(state.current_number, state.target_number, state.moves_used, orbit_items, active_level_data())
-	var hint_text := str(hint_result.get("text", ""))
-	var hint_target: Dictionary = (hint_result.get("target", {}) as Dictionary).duplicate(true)
 	if state.spend_hint():
 		AudioManagerScript.play_hint_reveal()
 		state.cache_hint(hint_text, hint_target)
 		state.save_progress()
-		if hint_target.is_empty():
-			game_screen.show_hint_result(hint_text, state.lumens)
-		else:
-			game_screen.reveal_hint_result(hint_text, state.lumens, hint_target)
+		game_screen.reveal_hint_result(hint_text, state.lumens, hint_target)
 		refresh_game_screen()
 
 func show_free_tutorial_hint() -> void:
@@ -982,10 +989,10 @@ func show_free_tutorial_hint() -> void:
 		false
 	)
 
-func _on_hint_ad_requested() -> void:
+func _on_hint_ad_requested(reward_amount: int) -> void:
 	if tutorial_mode:
 		return
-	state.grant_ad_reward()
+	state.grant_ad_reward(reward_amount)
 	state.save_progress()
 	# Advertising only replenishes the balance. Return to the matching confirmation
 	# state instead of automatically buying/revealing the hint.
@@ -1038,13 +1045,14 @@ func _continue_after_complete_popup() -> void:
 func _on_popup_levels_pressed() -> void:
 	complete_popup.hide_popup(show_level_select)
 
-func _on_double_reward_requested() -> void:
-	# Double just the delta this win paid; base rewards stay delta-based (no farm).
+func _on_triple_reward_requested() -> void:
+	# Triple just the delta this win paid; base rewards stay delta-based (no farm).
 	if last_reward_delta <= 0:
 		return
-	state.lumens += last_reward_delta
+	state.lumens += last_reward_delta * 2
 	state.save_progress()
-	complete_popup.apply_reward_doubled()
+	game_screen.update_lumens_badge(state.lumens)
+	complete_popup.apply_reward_tripled()
 	last_reward_delta = 0
 
 func tutorial_help_text(data: Dictionary) -> String:

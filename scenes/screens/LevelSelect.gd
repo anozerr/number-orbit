@@ -8,7 +8,7 @@ signal back_pressed
 signal settings_pressed
 signal level_selected(level_number: int)
 signal skip_level_requested(level_number: int)
-signal ad_reward_requested(level_number: int)
+signal ad_reward_requested(level_number: int, reward_amount: int)
 
 var locked_popup: Control
 var locked_popup_panel: Panel
@@ -327,7 +327,11 @@ func build_level_chip(parent: Control, pos: Vector2, chip_size: Vector2, global_
 		UIStyles.add_press_animation(btn, UIStyles.CORNER)
 		btn.pressed.connect(_on_level_button_pressed.bind(global_level))
 	else:
-		var skippable := tutorials_done and global_level == max_unlocked_level + 1
+		var skippable := (
+			tutorials_done
+			and global_level == max_unlocked_level + 1
+			and skip_cost_for(global_level) > 0
+		)
 		btn.pressed.connect(show_locked_level_popup.bind(global_level, skippable))
 	parent.add_child(btn)
 
@@ -454,7 +458,9 @@ func build_locked_level_popup() -> void:
 	panel.add_child(locked_popup_unlock_button)
 
 	locked_popup_ad_button = PopupFactoryScript.primary_button(Locale.t("levels.locked.watch_ad", "Watch Ad"), pw, 500.0)
-	locked_popup_ad_button.pressed.connect(func(): ad_reward_requested.emit(locked_popup_level_number))
+	locked_popup_ad_button.pressed.connect(func():
+		ad_reward_requested.emit(locked_popup_level_number, ad_reward_for(locked_popup_level_number))
+	)
 	panel.add_child(locked_popup_ad_button)
 
 	locked_popup_close_button = PopupFactoryScript.secondary_button(Locale.t("common.cancel", "Cancel"), pw, 735.0)
@@ -508,7 +514,7 @@ func update_locked_level_popup_content() -> void:
 		locked_popup_body.text = Locale.t(
 			"levels.locked.insufficient",
 			"Unlocking this level costs %d Lumens. You don't have enough — watch an ad to get %d Lumens."
-		) % [cost, GameState.AD_REWARD_LUMENS]
+		) % [cost, ad_reward_for(locked_popup_level_number)]
 		locked_popup_balance.text = Locale.t("hint.balance_short", "Balance: %d / %d Lumens") % [_lumens, cost]
 		locked_popup_balance.position.y = 436.0
 		locked_popup_balance.visible = true
@@ -531,10 +537,10 @@ func update_locked_level_popup_content() -> void:
 		locked_popup_ad_button.visible = false
 
 func skip_cost_for(level_number: int) -> int:
-	var band := LevelData.difficulty_index_for_level(level_number)
-	if band < 0 or band >= GameState.BAND_SKIP_COST.size():
-		return 0
-	return int(GameState.BAND_SKIP_COST[band])
+	return int(GameState.economy_for_level(level_number).get("unlock", 0))
+
+func ad_reward_for(level_number: int) -> int:
+	return GameState.ad_reward_for_level(level_number)
 
 func layout_locked_level_popup(skippable: bool) -> void:
 	if not is_instance_valid(locked_popup_panel):

@@ -9,16 +9,16 @@ const SAVE_TEMP_SUFFIX := ".tmp"
 const SAVE_BACKUP_SUFFIX := ".bak"
 const SAVE_CORRUPT_SUFFIX := ".corrupt"
 const STARTING_LUMENS := 100
-const REPLAY_HINT_COST := 10
-const FINAL_REWARD := 500
-# Hint price per difficulty band; index matches LevelData.DIFFICULTIES.
-# Placeholder levels keep the later band prices active on the 100-level map.
-const BAND_HINT_COST := [10, 30, 60, 150, 250]
-# One rewarded ad always grants a flat lumen top-up and nothing else — hints and
-# skips are bought with lumens. See §7.
-const AD_REWARD_LUMENS := 50
-# Level-skip price per band. Placeholders can be opened through level 100.
-const BAND_SKIP_COST := [50, 100, 200, 400, 0]
+# Economy table by difficulty band; index matches LevelData.DIFFICULTIES.
+# Reward arrays are indexed by earned stars: [0★, 1★, 2★, 3★].
+# A zero unlock cost means that band cannot be opened with Lumens.
+const BAND_ECONOMY := [
+	{"rewards": [0, 10, 20, 30], "hint": 20, "unlock": 50, "ad": 20},
+	{"rewards": [0, 20, 30, 50], "hint": 40, "unlock": 100, "ad": 40},
+	{"rewards": [0, 40, 60, 100], "hint": 80, "unlock": 200, "ad": 80},
+	{"rewards": [0, 80, 120, 200], "hint": 150, "unlock": 400, "ad": 150},
+	{"rewards": [0, 200, 350, 500], "hint": 300, "unlock": 0, "ad": 300},
+]
 
 var levels: Array = []
 var current_level: int = 1
@@ -133,37 +133,23 @@ func claim_level_reward(stars: int) -> int:
 	lumens += delta
 	return delta
 
-# 3★ reward at level L equals the hint price of L+1 ("3★ = one hint forward").
-# 2★ ≈ ⅔ and 1★ ≈ ⅓ of that (snapped to a tidy 10), so neither fully covers the
-# next hint. The final bundled level pays a flat trophy on completion.
+# Rewards are cumulative per level. Replaying with a better rating pays only the
+# difference between the new tier and the best tier already stored in the save.
 func reward_for_stars_at_level(stars: int, level_number: int) -> int:
-	if stars <= 0:
+	if stars <= 0 or level_number < 1 or level_number > LevelData.LEVEL_COUNT:
 		return 0
-	if level_number >= LevelData.LEVEL_COUNT:
-		return FINAL_REWARD
-	var three: int = hint_cost_for_level(level_number + 1)
-	match stars:
-		3:
-			return three
-		2:
-			return int(snapped(three * 2.0 / 3.0, 10.0))
-		1:
-			return int(snapped(three / 3.0, 10.0))
-	return 0
+	var economy := economy_for_level(level_number)
+	var rewards: Array = economy.get("rewards", []) as Array
+	var reward_index := int(clamp(stars, 0, 3))
+	if reward_index >= rewards.size():
+		return 0
+	return int(rewards[reward_index])
 
 func hint_cost_for_level(level_number: int) -> int:
-	var band: int = LevelData.difficulty_index_for_level(level_number)
-	if band < 0 or band >= BAND_HINT_COST.size():
-		return int(BAND_HINT_COST[BAND_HINT_COST.size() - 1])
-	return int(BAND_HINT_COST[band])
+	return int(economy_for_level(level_number).get("hint", 0))
 
-# Price of the next hint on the current level. A level already at 3★ charges the
-# flat replay price; 1–2★ or unbeaten levels pay full band price, so a cheap
-# hint can never sell a 3★ upgrade — see §7.
+# Hint prices are fixed by level band, including replays of completed levels.
 func current_hint_cost() -> int:
-	var index: int = current_level - 1
-	if index >= 0 and index < star_ratings.size() and int(star_ratings[index]) == 3:
-		return REPLAY_HINT_COST
 	return hint_cost_for_level(current_level)
 
 func can_afford_hint() -> bool:
@@ -176,23 +162,39 @@ func spend_hint() -> bool:
 	lumens -= cost
 	return true
 
-func grant_ad_reward() -> void:
-	lumens += AD_REWARD_LUMENS
+func current_ad_reward() -> int:
+	return GameState.ad_reward_for_level(current_level)
 
 func skip_cost_for_level(level_number: int) -> int:
+	return int(economy_for_level(level_number).get("unlock", 0))
+
+static func ad_reward_for_level(level_number: int) -> int:
+	return int(economy_for_level(level_number).get("ad", 0))
+
+func grant_ad_reward(reward_amount: int) -> int:
+	var granted := maxi(0, reward_amount)
+	lumens += granted
+	return granted
+
+static func economy_for_level(level_number: int) -> Dictionary:
+	if level_number < 1 or level_number > LevelData.LEVEL_COUNT:
+		return {}
 	var band: int = LevelData.difficulty_index_for_level(level_number)
-	if band < 0 or band >= BAND_SKIP_COST.size():
-		return 0
-	return int(BAND_SKIP_COST[band])
+	if band < 0 or band >= BAND_ECONOMY.size():
+		return {}
+	return BAND_ECONOMY[band] as Dictionary
 
 # A locked level can be opened for lumens only if it is the very next level and
-# tutorials are finished. This also applies to placeholder levels through L100.
+# tutorials are finished. Level 100 has no paid-unlock price and must be reached
+# by completing level 99.
 func can_skip_level(level_number: int) -> bool:
 	if not are_all_tutorials_completed():
 		return false
 	if level_number != max_unlocked_level + 1:
 		return false
 	if level_number > LevelData.LEVEL_COUNT:
+		return false
+	if skip_cost_for_level(level_number) <= 0:
 		return false
 	return true
 

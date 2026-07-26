@@ -5,7 +5,7 @@ const PopupFactoryScript = preload("res://scripts/ui/PopupFactory.gd")
 
 signal next_pressed
 signal levels_pressed
-signal double_reward_requested
+signal triple_reward_requested
 
 class RewardPlayIcon:
 	extends Control
@@ -57,19 +57,37 @@ var _r_reward := 0
 var _r_lumens := 0
 var _r_show_details := true
 var _r_tutorial_message := ""
-var _reward_doubled := false
+var _reward_tripled := false
 
 const DEFAULT_PANEL_HEIGHT := 1123.0
 const TUTORIAL_PANEL_HEIGHT := 710.0
 const REWARD_PILL_HEIGHT := 74.0
 const REWARD_PILL_RADIUS := 37
 const REWARD_ROW_Y := 448.0
-const REWARD_HINT_Y := 548.0
 const REWARD_HINT_HEIGHT := 44.0
 const REWARD_ROW_GAP := 60.0
 const REWARD_TAB_WIDTH := 132.0
 const DETAILS_NEXT_Y := 630.0
 const DETAILS_LEVELS_Y := 855.0
+# Both fresh rewards (with the ×3 hint) and claimed rewards share one stable
+# compact geometry. The 30px optical lift equalizes the gap above the actions
+# without changing the title/stars/reward rows; the panel loses the same 30px so
+# its 100px bottom padding stays intact.
+const DETAILS_ACTION_LIFT := 30.0
+const COMPACT_NEXT_Y := DETAILS_NEXT_Y - DETAILS_ACTION_LIFT
+const COMPACT_LEVELS_Y := DETAILS_LEVELS_Y - DETAILS_ACTION_LIFT
+const COMPACT_PANEL_HEIGHT := DEFAULT_PANEL_HEIGHT - DETAILS_ACTION_LIFT
+# The final level has no Next Level action, so Back to Levels uses the compact
+# primary-action slot and the unused second-action slice is removed entirely.
+const FINAL_LEVELS_Y := COMPACT_NEXT_Y
+const FINAL_PANEL_HEIGHT := COMPACT_PANEL_HEIGHT - (COMPACT_LEVELS_Y - FINAL_LEVELS_Y)
+# Center both ×3 guidance states in the vertical lane between the reward row
+# and the first action: 17px above the label and 17px below it.
+const REWARD_HINT_Y := (
+	REWARD_ROW_Y
+	+ REWARD_PILL_HEIGHT
+	+ (COMPACT_NEXT_Y - REWARD_ROW_Y - REWARD_PILL_HEIGHT - REWARD_HINT_HEIGHT) * 0.5
+)
 const REWARD_GOLD_TOP := Color("#FFD25E")
 const REWARD_GOLD := Color("#F5A623")
 const REWARD_PURPLE := Color("#5B32C4")
@@ -160,7 +178,7 @@ func build() -> void:
 	reward_pill.focus_mode = Control.FOCUS_NONE
 	reward_pill.clip_contents = true
 	reward_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	reward_pill.pressed.connect(func(): double_reward_requested.emit())
+	reward_pill.pressed.connect(func(): triple_reward_requested.emit())
 	UIStyles.add_press_animation(reward_pill, REWARD_PILL_RADIUS)
 	panel.add_child(reward_pill)
 
@@ -252,8 +270,11 @@ func show_result(title_text: String, stars: int, moves: int, has_next: bool, rew
 	_r_tutorial_message = tutorial_message
 	# A fresh completion (animate) resets the one-shot; resize re-applies keep it.
 	if animate:
-		_reward_doubled = false
-	set_panel_height(TUTORIAL_PANEL_HEIGHT if not show_details else DEFAULT_PANEL_HEIGHT)
+		_reward_tripled = false
+	var target_panel_height := TUTORIAL_PANEL_HEIGHT
+	if show_details:
+		target_panel_height = COMPACT_PANEL_HEIGHT if has_next else FINAL_PANEL_HEIGHT
+	set_panel_height(target_panel_height)
 	var pw := panel_width
 	var raw_title: String = Locale.t("complete.title", "%s Complete!") % title_text.capitalize() if show_details else Locale.t("complete.excellent", "Excellent!")
 	title_label.text = raw_title.to_upper()
@@ -266,11 +287,14 @@ func show_result(title_text: String, stars: int, moves: int, has_next: bool, rew
 	if show_details:
 		title_label.position = Vector2(0, 154)
 		stars_label.position = Vector2(0, 292)
-		next_button.position = Vector2(PopupFactoryScript.POPUP_PAD, DETAILS_NEXT_Y)
-		levels_button.position = Vector2(PopupFactoryScript.POPUP_PAD, DETAILS_LEVELS_Y)
+		next_button.position = Vector2(PopupFactoryScript.POPUP_PAD, COMPACT_NEXT_Y)
+		levels_button.position = Vector2(
+			PopupFactoryScript.POPUP_PAD,
+			COMPACT_LEVELS_Y if has_next else FINAL_LEVELS_Y,
+		)
 		draw_star_row(stars, animate)
 		moves_label.text = Locale.t("complete.moves", "Moves: %d") % moves
-		update_reward_pill(reward * 2 if _reward_doubled else reward)
+		update_reward_pill(reward * 3 if _reward_tripled else reward)
 		next_button.visible = has_next
 		levels_button.visible = true
 	else:
@@ -295,11 +319,11 @@ func show_result(title_text: String, stars: int, moves: int, has_next: bool, rew
 	if animate and show_details:
 		start_confetti()
 
-# Player watched an ad to double the reward. The action stays in the reward row:
+# Player watched an ad to triple the reward. The action stays in the reward row:
 # buttons and panel geometry never move, and the pill becomes a static receipt.
-func apply_reward_doubled() -> void:
-	_reward_doubled = true
-	update_reward_pill(_r_reward * 2)
+func apply_reward_tripled() -> void:
+	_reward_tripled = true
+	update_reward_pill(_r_reward * 3)
 
 func set_panel_height(height: float) -> void:
 	if panel == null:
@@ -317,13 +341,13 @@ func update_reward_pill(reward: int) -> void:
 	reward_pill.visible = true
 	reward_label.visible = false
 	var amount: int = max(0, reward)
-	var interactive := amount > 0 and not _reward_doubled
-	var doubled := amount > 0 and _reward_doubled
+	var interactive := amount > 0 and not _reward_tripled
+	var tripled := amount > 0 and _reward_tripled
 	# Keep the signs in their own labels. Poppins positions + and × slightly low
 	# on the text baseline, so they receive a small optical lift without moving
 	# the adjacent digits.
 	var sign_text := "+" if amount > 0 else ""
-	var number_text := (Locale.t("complete.reward", "%d Lumens") % amount if doubled else str(amount)) if amount > 0 else Locale.t("complete.reward_claimed", "Reward claimed")
+	var number_text := (Locale.t("complete.reward", "%d Lumens") % amount if tripled else str(amount)) if amount > 0 else Locale.t("complete.reward_claimed", "Reward claimed")
 	var unit_text := localized_reward_unit(amount) if interactive else ""
 	var amount_font_size := 38 if amount > 0 else 32
 	var unit_font_size := 24
@@ -403,7 +427,7 @@ func update_reward_pill(reward: int) -> void:
 		UIStyles.apply_font(reward_unit_label, UIStyles.FONT_BOLD, unit_font_size, UIStyles.MUTED)
 		configure_reward_tab(seam_x, tab_width)
 		var multiplier_sign_width := UIStyles.FONT_EXTRABOLD.get_string_size("×", HORIZONTAL_ALIGNMENT_LEFT, -1, 32).x
-		var multiplier_number_width := UIStyles.FONT_EXTRABOLD.get_string_size("2", HORIZONTAL_ALIGNMENT_LEFT, -1, 32).x
+		var multiplier_number_width := UIStyles.FONT_EXTRABOLD.get_string_size("3", HORIZONTAL_ALIGNMENT_LEFT, -1, 32).x
 		var icon_width := 20.0
 		var icon_gap := 13.0
 		var multiplier_gap := 1.0
@@ -416,23 +440,23 @@ func update_reward_pill(reward: int) -> void:
 		reward_multiplier_sign_label.text = "×"
 		reward_multiplier_sign_label.position = Vector2(tab_content_x + icon_width + icon_gap, SIGN_VERTICAL_NUDGE)
 		reward_multiplier_sign_label.size = Vector2(multiplier_sign_width + 2.0, REWARD_PILL_HEIGHT)
-		reward_multiplier_label.text = "2"
+		reward_multiplier_label.text = "3"
 		reward_multiplier_label.position = Vector2(tab_content_x + icon_width + icon_gap + multiplier_sign_width + multiplier_gap, 0.0)
 		reward_multiplier_label.size = Vector2(multiplier_number_width + 2.0, REWARD_PILL_HEIGHT)
 		UIStyles.apply_font(reward_multiplier_sign_label, UIStyles.FONT_EXTRABOLD, 32, REWARD_BROWN)
 		UIStyles.apply_font(reward_multiplier_label, UIStyles.FONT_EXTRABOLD, 32, REWARD_BROWN)
-		reward_hint_label.text = Locale.t("complete.double_hint", "Tap ×2 to double — watch a short ad")
+		reward_hint_label.text = Locale.t("complete.triple_hint", "Tap ×3 to triple your reward — watch a short ad")
 		UIStyles.apply_font(reward_hint_label, UIStyles.FONT_SEMIBOLD, 30, REWARD_HINT_TEXT)
 		reward_hint_label.visible = true
 		start_reward_pulse()
-	elif doubled:
+	elif tripled:
 		stop_reward_pulse()
 		var receipt_bg := Color(167.0 / 255.0, 139.0 / 255.0, 250.0 / 255.0, 0.16) if UIStyles.is_dark() else Color(139.0 / 255.0, 92.0 / 255.0, 246.0 / 255.0, 0.10)
 		var receipt_text := Color("#C4B5FD") if UIStyles.is_dark() else REWARD_PURPLE
 		set_reward_pill_style(receipt_bg, Color.TRANSPARENT, 0)
 		UIStyles.apply_font(reward_sign_label, UIStyles.FONT_BOLD, amount_font_size, receipt_text)
 		UIStyles.apply_font(reward_number_label, UIStyles.FONT_BOLD, amount_font_size, receipt_text)
-		reward_hint_label.text = Locale.t("complete.double_done", "Reward doubled!")
+		reward_hint_label.text = Locale.t("complete.triple_done", "Reward tripled!")
 		UIStyles.apply_font(reward_hint_label, UIStyles.FONT_SEMIBOLD, 30, REWARD_DONE_HINT)
 		reward_hint_label.visible = true
 

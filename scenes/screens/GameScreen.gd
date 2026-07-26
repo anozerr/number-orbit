@@ -12,7 +12,7 @@ signal settings_pressed
 signal restart_pressed
 signal orbit_pressed(value: int, op: String, item_id: String)
 signal hint_requested
-signal hint_ad_requested
+signal hint_ad_requested(reward_amount: int)
 signal coach_header_mode_changed(active: bool)
 
 class OrbitButtonOutline:
@@ -26,6 +26,30 @@ class OrbitButtonOutline:
 		if radius <= 0.0:
 			return
 		draw_arc(size * 0.5, radius, 0.0, TAU, 192, outline_color, outline_width, true)
+
+class HintPingRing:
+	extends Control
+
+	var ring_color: Color = Color.WHITE
+	var progress: float = 0.0
+	var start_radius: float = 96.0
+	var expand: float = 72.0
+	var max_width: float = 5.0
+
+	func set_progress(value: float) -> void:
+		progress = clampf(value, 0.0, 1.0)
+		queue_redraw()
+
+	func _draw() -> void:
+		if progress <= 0.0 or progress >= 1.0:
+			return
+		var radius := start_radius + expand * progress
+		if radius <= 0.0:
+			return
+		var col := ring_color
+		col.a *= (1.0 - progress)
+		var width := maxf(1.0, max_width * (1.0 - progress * 0.6))
+		draw_arc(size * 0.5, radius, 0.0, TAU, 128, col, width, true)
 
 class LumensBadgeOutline:
 	extends Control
@@ -70,11 +94,15 @@ const INFO_REST_X := 48.0
 const INFO_FADE_PX := 44.0
 const INFO_TEXT_SAFE_INSET := 16.0
 const INFO_TEMP_HOLD_SECONDS := 3.0
-const HINT_REPEAT_GLOW_EXTENT := 42.0
-const HINT_REPEAT_GLOW_ALPHA_FACTOR := 1.45
-const HINT_REVEAL_RESET := 0.14
-const HINT_REVEAL_GROW := 0.48
-const HINT_REVEAL_SETTLE := 0.42
+const HINT_REVEAL_GLOW_EXTENT := 34.0
+const HINT_REVEAL_GLOW_ALPHA_FACTOR := 1.18
+const HINT_REVEAL_APPEAR := 0.36
+const HINT_STEADY_STRENGTH := 0.32
+const HINT_PING_START_RADIUS := 96.0
+const HINT_PING_EXPAND := 72.0
+const HINT_PING_DURATION := 0.62
+const HINT_PING_WIDTH := 5.0
+const HINT_POP_SCALE := 1.10
 const ACTION_BUTTON_Y := 1518.0
 const ACTION_BUTTON_HEIGHT := 174.0
 const CENTER_CIRCLE_DIAMETER := 335
@@ -121,6 +149,7 @@ var current_number_value: int = 0
 var current_lumens: int = 0
 var current_moves: int = 0
 var current_hint_cost: int = 0
+var current_ad_reward: int = 0
 var current_target_value: int = 0
 var current_star_mode := ""
 var current_star_bands: Array = []
@@ -141,7 +170,11 @@ var info_caption_tween: Tween
 var info_line_font_size := -1
 var hint_highlight_item_id := ""
 var hint_highlight_tween: Tween
+var hint_reveal_tween: Tween
+var hint_visibility_tween: Tween
 var hint_highlight_strength := 0.0
+var hint_reveal_boost := 0.0
+var hint_glow_visibility := 0.0
 var skip_orbit_entrance_once := false
 # Lead-in before the orbit chips pop in. Set by Main to the screen-crossfade
 # duration on a fresh-level entry so the ripple starts as the screen settles,
@@ -466,7 +499,7 @@ void fragment() {
 	add_child(hint_popup)
 	hint_popup.build(Layout.viewport_size(self).x)
 	hint_popup.hint_requested.connect(func(): hint_requested.emit())
-	hint_popup.hint_ad_requested.connect(func(): hint_ad_requested.emit())
+	hint_popup.hint_ad_requested.connect(func(reward_amount: int): hint_ad_requested.emit(reward_amount))
 
 	coach_overlay = CoachOverlayScript.new()
 	add_child(coach_overlay)
@@ -489,13 +522,14 @@ func configure(view: GameViewStateScript) -> void:
 	current_number_value = view.current_number
 	current_lumens = view.lumens
 	current_hint_cost = view.hint_cost
+	current_ad_reward = view.ad_reward
 	current_moves = view.moves
 	current_target_value = view.target_number
 	current_star_mode = view.star_mode
 	current_star_bands = view.star_bands.duplicate(true)
 	current_is_tutorial = view.tutorial
 	if hint_popup != null:
-		hint_popup.configure_state(current_moves, current_lumens, current_hint_cost)
+		hint_popup.configure_state(current_moves, current_lumens, current_hint_cost, current_ad_reward)
 	level_label.text = view.title_text
 	goal_label.text = "?" if view.placeholder else str(view.target_number)
 	tutorial_help_text_current = (
@@ -1277,9 +1311,9 @@ func apply_operation_button_style(button: Button, op: String, bg: Color, border:
 	var hover: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
 	var pressed: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
 	if valid and str(button.get_meta("id", "")) == hint_highlight_item_id:
-		apply_hint_shadow(normal, op, hint_highlight_strength)
-		apply_hint_shadow(hover, op, hint_highlight_strength)
-		apply_hint_shadow(pressed, op, hint_highlight_strength)
+		apply_hint_shadow(normal, op, hint_highlight_strength, hint_reveal_boost, hint_glow_visibility)
+		apply_hint_shadow(hover, op, hint_highlight_strength, hint_reveal_boost, hint_glow_visibility)
+		apply_hint_shadow(pressed, op, hint_highlight_strength, hint_reveal_boost, hint_glow_visibility)
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", hover)
 	button.add_theme_stylebox_override("pressed", pressed)
@@ -1310,23 +1344,28 @@ func update_orbit_button_outline(button: Button, color: Color) -> void:
 	outline.outline_width = 4.0
 	outline.queue_redraw()
 
-func apply_hint_shadow(style: StyleBoxFlat, op: String, strength: float = 1.0) -> void:
+func apply_hint_shadow(
+	style: StyleBoxFlat,
+	op: String,
+	breath_strength: float = 1.0,
+	reveal_boost: float = 0.0,
+	visibility: float = 1.0,
+) -> void:
 	var shadow := UIStyles.operation_border(op)
-	# Reveal strength -1→0 grows the halo from the chip's center into the regular
-	# breathing glow. 0→1 is the light pulse; 1→2 is the large reveal halo.
-	if strength < 0.0:
-		var reveal_progress := clampf(strength + 1.0, 0.0, 1.0)
-		shadow.a = (0.62 if UIStyles.is_dark() else 0.48) * UIStyles.ATTENTION_GLOW_MIN_ALPHA * reveal_progress
-		style.shadow_color = shadow
-		style.shadow_size = roundi(UIStyles.ATTENTION_GLOW_MIN_EXTENT * reveal_progress)
-		style.shadow_offset = Vector2.ZERO
-		return
-	var amount := clampf(strength, 0.0, 1.0)
-	var boost := clampf(strength - 1.0, 0.0, 1.0)
-	var alpha_factor := lerpf(UIStyles.attention_glow_alpha(amount), HINT_REPEAT_GLOW_ALPHA_FACTOR, boost)
-	shadow.a = minf(1.0, (0.62 if UIStyles.is_dark() else 0.48) * alpha_factor)
+	# Breathing owns the permanent rhythm. Hint presses only add a small,
+	# independent halo on top, so they never reset or accelerate that rhythm.
+	var amount := clampf(breath_strength, 0.0, 1.0)
+	var boost := clampf(reveal_boost, 0.0, 1.0)
+	var alpha_factor := (
+		UIStyles.attention_glow_alpha(amount)
+		+ (HINT_REVEAL_GLOW_ALPHA_FACTOR - UIStyles.ATTENTION_GLOW_MAX_ALPHA) * boost
+	)
+	shadow.a = minf(1.0, (0.62 if UIStyles.is_dark() else 0.48) * alpha_factor) * clampf(visibility, 0.0, 1.0)
 	style.shadow_color = shadow
-	style.shadow_size = roundi(lerpf(UIStyles.attention_glow_extent(amount), HINT_REPEAT_GLOW_EXTENT, boost))
+	style.shadow_size = roundi(
+		UIStyles.attention_glow_extent(amount)
+		+ (HINT_REVEAL_GLOW_EXTENT - UIStyles.ATTENTION_GLOW_MAX_EXTENT) * boost
+	)
 	style.shadow_offset = Vector2.ZERO
 
 func _on_orbit_button_pressed(button: Button) -> void:
@@ -1450,7 +1489,9 @@ func highlight_hint_target(target: Dictionary) -> void:
 		return
 	clear_hint_highlight()
 	hint_highlight_item_id = target_item_id
-	hint_highlight_strength = -1.0
+	hint_highlight_strength = 0.0
+	hint_reveal_boost = 0.0
+	hint_glow_visibility = 0.0
 	style_operation_button(button, op, valid_operation)
 	play_hint_reveal(button, op, true)
 
@@ -1470,17 +1511,22 @@ func restore_hint_highlight(target: Dictionary) -> void:
 		return
 	hint_highlight_item_id = str(button.get_meta("id", ""))
 	hint_highlight_strength = 0.0
+	hint_reveal_boost = 0.0
+	hint_glow_visibility = 1.0
 	style_operation_button(button, op, true)
 	start_hint_highlight_pulse(button, op)
 
-func set_hint_highlight_strength(button: Button, op: String, strength: float) -> void:
+func set_hint_glow_visibility(button: Button, op: String, visibility: float) -> void:
 	if button == null or button.is_queued_for_deletion():
 		return
-	hint_highlight_strength = clampf(strength, -1.0, 2.0)
+	hint_glow_visibility = clampf(visibility, 0.0, 1.0)
+	refresh_hint_glow(button, op)
+
+func refresh_hint_glow(button: Button, op: String) -> void:
 	for state in [&"normal", &"hover", &"pressed"]:
 		var style := button.get_theme_stylebox(state) as StyleBoxFlat
 		if style != null:
-			apply_hint_shadow(style, op, hint_highlight_strength)
+			apply_hint_shadow(style, op, hint_highlight_strength, hint_reveal_boost, hint_glow_visibility)
 
 func pulse_existing_hint_highlight(button: Button, op: String) -> void:
 	play_hint_reveal(button, op, false)
@@ -1488,43 +1534,56 @@ func pulse_existing_hint_highlight(button: Button, op: String) -> void:
 func play_hint_reveal(button: Button, op: String, from_center: bool) -> void:
 	if button == null or button.is_queued_for_deletion():
 		return
-	if hint_highlight_tween != null and hint_highlight_tween.is_valid():
-		hint_highlight_tween.kill()
-	var starting_strength := -1.0 if from_center else clampf(hint_highlight_strength, 0.0, 1.0)
-	set_hint_highlight_strength(button, op, starting_strength)
-	hint_highlight_tween = button.create_tween()
-	if not from_center:
-		# Repeated Hint presses smoothly gather the light back into the chip before
-		# replaying the same center-out reveal instead of popping to full size.
-		hint_highlight_tween.tween_method(func(strength: float) -> void:
-			set_hint_highlight_strength(button, op, strength), starting_strength, -1.0, HINT_REVEAL_RESET).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	hint_highlight_tween.tween_method(func(strength: float) -> void:
-		set_hint_highlight_strength(button, op, strength), -1.0, 2.0, HINT_REVEAL_GROW).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	hint_highlight_tween.tween_method(func(strength: float) -> void:
-		set_hint_highlight_strength(button, op, strength), 2.0, 1.0, HINT_REVEAL_SETTLE).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	hint_highlight_tween.finished.connect(func() -> void:
-		if is_instance_valid(button) and hint_highlight_item_id == str(button.get_meta("id", "")):
-			start_hint_highlight_pulse(button, op, 1.0)
-	)
+	# Постоянное ровное свечение (без «дыхания»).
+	apply_hint_steady_glow(button, op)
+	# Плавно проявляем свечение только на первом показе; повтор оставляет его на максимуме.
+	if from_center:
+		if hint_visibility_tween != null and hint_visibility_tween.is_valid():
+			hint_visibility_tween.kill()
+		hint_visibility_tween = button.create_tween()
+		hint_visibility_tween.tween_method(func(v: float) -> void:
+			set_hint_glow_visibility(button, op, v), hint_glow_visibility, 1.0, HINT_REVEAL_APPEAR).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	else:
+		set_hint_glow_visibility(button, op, 1.0)
+	# Быстрый «поп» спутника.
+	UIStyles.pop_scale(button, HINT_POP_SCALE, 0.10, 0.18)
+	# Расходящееся кольцо-«пинг».
+	var ring := ensure_ping_ring(button, op)
+	if hint_reveal_tween != null and hint_reveal_tween.is_valid():
+		hint_reveal_tween.kill()
+	hint_reveal_tween = button.create_tween()
+	hint_reveal_tween.tween_method(ring.set_progress, 0.0, 1.0, HINT_PING_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	hint_reveal_tween.tween_callback(ring.set_progress.bind(0.0))
 
 func start_hint_highlight_pulse(button: Button, op: String, starting_level: float = 0.0) -> void:
+	apply_hint_steady_glow(button, op)
+
+func apply_hint_steady_glow(button: Button, op: String) -> void:
 	if button == null or button.is_queued_for_deletion():
 		return
 	if hint_highlight_tween != null and hint_highlight_tween.is_valid():
 		hint_highlight_tween.kill()
-	var starts_at_peak := starting_level >= 0.5
-	set_hint_highlight_strength(button, op, 1.0 if starts_at_peak else 0.0)
-	hint_highlight_tween = button.create_tween().set_loops()
-	if starts_at_peak:
-		hint_highlight_tween.tween_method(func(strength: float) -> void:
-			set_hint_highlight_strength(button, op, strength), 1.0, 0.0, UIStyles.ATTENTION_PULSE_HALF_PERIOD).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		hint_highlight_tween.tween_method(func(strength: float) -> void:
-			set_hint_highlight_strength(button, op, strength), 0.0, 1.0, UIStyles.ATTENTION_PULSE_HALF_PERIOD).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	else:
-		hint_highlight_tween.tween_method(func(strength: float) -> void:
-			set_hint_highlight_strength(button, op, strength), 0.0, 1.0, UIStyles.ATTENTION_PULSE_HALF_PERIOD).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		hint_highlight_tween.tween_method(func(strength: float) -> void:
-			set_hint_highlight_strength(button, op, strength), 1.0, 0.0, UIStyles.ATTENTION_PULSE_HALF_PERIOD).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	hint_highlight_tween = null
+	hint_highlight_strength = HINT_STEADY_STRENGTH
+	hint_reveal_boost = 0.0
+	refresh_hint_glow(button, op)
+
+func ensure_ping_ring(button: Button, op: String) -> HintPingRing:
+	var ring := button.get_node_or_null("HintPingRing") as HintPingRing
+	if ring == null:
+		ring = HintPingRing.new()
+		ring.name = "HintPingRing"
+		ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ring.z_index = 8
+		button.add_child(ring)
+	ring.position = Vector2.ZERO
+	ring.size = button.size
+	ring.start_radius = HINT_PING_START_RADIUS
+	ring.expand = HINT_PING_EXPAND
+	ring.max_width = HINT_PING_WIDTH
+	ring.ring_color = UIStyles.operation_border(op)
+	ring.set_progress(0.0)
+	return ring
 
 func find_orbit_button_by_move(op: String, value: int) -> Button:
 	for child in orbit.get_children():
@@ -1539,9 +1598,17 @@ func clear_hint_highlight() -> void:
 	var previous_button := find_orbit_button(hint_highlight_item_id) if not hint_highlight_item_id.is_empty() and is_instance_valid(orbit) else null
 	if hint_highlight_tween != null and hint_highlight_tween.is_valid():
 		hint_highlight_tween.kill()
+	if hint_reveal_tween != null and hint_reveal_tween.is_valid():
+		hint_reveal_tween.kill()
+	if hint_visibility_tween != null and hint_visibility_tween.is_valid():
+		hint_visibility_tween.kill()
 	hint_highlight_item_id = ""
 	hint_highlight_strength = 0.0
+	hint_reveal_boost = 0.0
+	hint_glow_visibility = 0.0
 	hint_highlight_tween = null
+	hint_reveal_tween = null
+	hint_visibility_tween = null
 	if previous_button != null:
 		var op := str(previous_button.get_meta("op", ""))
 		var valid := bool(previous_button.get_meta("operation_valid", true))
@@ -1678,7 +1745,7 @@ func show_hint_prompt_after_ad(balance: int) -> void:
 	current_lumens = balance
 	update_lumens_badge(balance)
 	if hint_popup != null:
-		hint_popup.configure_state(current_moves, current_lumens, current_hint_cost)
+		hint_popup.configure_state(current_moves, current_lumens, current_hint_cost, current_ad_reward)
 		hint_popup.show_prompt()
 
 func clear_hint_cache() -> void:

@@ -12,6 +12,7 @@ var allowed_ops: Array
 var failed: bool
 var lumens: int
 var hint_cost: int
+var ad_reward: int
 var tutorial: bool
 var tutorial_help: String
 var coach_hint: Dictionary
